@@ -38,6 +38,8 @@ constexpr const char* RouteCcsId = "routeCcs";
 
 const juce::Identifier SurfaceMapsStateId{ "ControllerSurfaceMaps" };
 const juce::Identifier SurfaceMapStateId{ "Map" };
+const juce::Identifier SurfaceControlsStateId{ "ControllerSurfaceControls" };
+const juce::Identifier SurfaceControlStateId{ "Control" };
 const juce::Identifier ControllerDeviceSlotsStateId{ "ControllerDeviceSlots" };
 const juce::Identifier ControllerDeviceSlotStateId{ "Slot" };
 
@@ -91,6 +93,11 @@ uint8_t scaleControllerValue(uint8_t input, int minimum, int maximum) noexcept
     return static_cast<uint8_t>(minimum <= maximum ? scaled : high - (scaled - low));
 }
 
+uint8_t switchControllerValue(uint8_t input, int minimum, int maximum) noexcept
+{
+    return static_cast<uint8_t>(input >= 64 ? juce::jlimit(0, 127, maximum) : juce::jlimit(0, 127, minimum));
+}
+
 galahad::SequencerChannelMode sequencerChannelModeFromIndex(int index) noexcept
 {
     switch (index)
@@ -133,6 +140,7 @@ GalahadMidiToolsProcessor::GalahadMidiToolsProcessor()
                                .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters_(*this, nullptr, "GalahadMidiTools", createParameterLayout())
 {
+    initializeControllerSurfaceControlProfiles();
     initializeControllerSurfaceMaps();
     cacheControllerMapParameters();
     updateEngineConfig(120.0);
@@ -310,6 +318,7 @@ void GalahadMidiToolsProcessor::getStateInformation(juce::MemoryBlock& destData)
     syncSurfaceEditorToSelectedMap();
     if (auto state = parameters_.copyState(); state.isValid())
     {
+        state.addChild(createControllerSurfaceControlProfilesState(), -1, nullptr);
         state.addChild(createControllerSurfaceMapsState(), -1, nullptr);
         state.addChild(createControllerDeviceSlotsState(), -1, nullptr);
         if (auto xml = state.createXml())
@@ -324,9 +333,13 @@ void GalahadMidiToolsProcessor::setStateInformation(const void* data, int sizeIn
         if (xml->hasTagName(parameters_.state.getType()))
         {
             auto state = juce::ValueTree::fromXml(*xml);
+            const auto surfaceControlsState = state.getChildWithName(SurfaceControlsStateId);
             const auto surfaceMapsState = state.getChildWithName(SurfaceMapsStateId);
             const auto controllerDeviceSlotsState = state.getChildWithName(ControllerDeviceSlotsStateId);
+            restoreControllerSurfaceControlProfilesState(surfaceControlsState);
             restoreControllerSurfaceMapsState(surfaceMapsState);
+            if (surfaceControlsState.isValid())
+                state.removeChild(surfaceControlsState, nullptr);
             if (surfaceMapsState.isValid())
                 state.removeChild(surfaceMapsState, nullptr);
             if (controllerDeviceSlotsState.isValid())

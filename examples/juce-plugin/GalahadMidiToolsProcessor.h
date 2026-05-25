@@ -46,6 +46,15 @@ public:
         bool hasAnyAssignment() const noexcept { return hasInputAssignment() || hasMapAssignment(); }
     };
 
+    struct SurfaceControlProfileSnapshot
+    {
+        int active{ 1 };
+        int type{ galahad::plugin::ControllerSurfaceControlTypeValue };
+
+        bool isActive() const noexcept { return active != 0; }
+        bool isButton() const noexcept { return type == galahad::plugin::ControllerSurfaceControlTypeButton; }
+    };
+
     GalahadMidiToolsProcessor();
     ~GalahadMidiToolsProcessor() override;
 
@@ -83,6 +92,13 @@ public:
     SurfaceMapSnapshot surfaceMapSnapshot(int controller, int control, int layer, int pattern, int targetChannel) const noexcept;
     void setSurfaceMapSnapshot(int controller, int control, int layer, int pattern, int targetChannel, const SurfaceMapSnapshot& snapshot) noexcept;
     void learnSurfaceMap(int controller, int control, int layer, int pattern, int targetChannel, const ControllerSnapshot& snapshot) noexcept;
+    SurfaceControlProfileSnapshot surfaceControlProfileSnapshot(int controller, int control) const noexcept;
+    void setSurfaceControlProfileSnapshot(int controller, int control, const SurfaceControlProfileSnapshot& snapshot) noexcept;
+    int addSurfaceControl(int controller, int type) noexcept;
+    void removeSurfaceControl(int controller, int control) noexcept;
+    int firstActiveSurfaceControl(int controller) const noexcept;
+    int activeSurfaceControlCount(int controller) const noexcept;
+    juce::String surfaceControlLabel(int controller, int control) const;
     void refreshHardwareMidiInputs();
     std::vector<juce::MidiDeviceInfo> availableMidiInputs() const;
     juce::StringArray activeHardwareInputNames() const;
@@ -124,6 +140,12 @@ private:
         std::atomic<int> value{ 0 };
         std::atomic<int> inputSet{ 0 };
         std::atomic<int> valueSet{ 0 };
+    };
+
+    struct ControllerSurfaceControlProfile
+    {
+        std::atomic<int> active{ 1 };
+        std::atomic<int> type{ galahad::plugin::ControllerSurfaceControlTypeValue };
     };
 
     struct SurfaceEditorParameters
@@ -188,6 +210,9 @@ private:
                                    size_t& outputCount) noexcept;
     juce::ValueTree createControllerSurfaceMapsState() const;
     void restoreControllerSurfaceMapsState(const juce::ValueTree& state);
+    void initializeControllerSurfaceControlProfiles() noexcept;
+    juce::ValueTree createControllerSurfaceControlProfilesState() const;
+    void restoreControllerSurfaceControlProfilesState(const juce::ValueTree& state);
     juce::ValueTree createControllerDeviceSlotsState() const;
     void restoreControllerDeviceSlotsState(const juce::ValueTree& state);
     void assignDefaultControllerSlotsIfNeeded(const std::vector<juce::MidiDeviceInfo>& devices);
@@ -211,6 +236,8 @@ private:
     SurfacePerformanceContext lastSurfacePerformanceContext_{};
     bool hasSurfacePerformanceContext_{ false };
     std::array<ControllerSurfaceMap, ControllerSurfaceMapSlotCount> controllerSurfaceMaps_{};
+    std::array<ControllerSurfaceControlProfile,
+               ControllerSlotCount * ControllerSurfaceControlCount> controllerSurfaceControlProfiles_{};
     galahad::SpscQueue<galahad::midi::SessionCell, 256> launchedCells_;
     std::unique_ptr<juce::MidiOutput> virtualMidiOutput_;
     std::vector<HardwareMidiInput> hardwareMidiInputs_;

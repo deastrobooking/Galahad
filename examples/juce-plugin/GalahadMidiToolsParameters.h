@@ -12,6 +12,8 @@ inline constexpr int ControllerTargetChannelCount = 16;
 inline constexpr int ControllerFaderCount = 8;
 inline constexpr int ControllerButtonCount = 15;
 inline constexpr int ControllerSurfaceControlCount = ControllerFaderCount + ControllerButtonCount;
+inline constexpr int ControllerSurfaceControlTypeValue = 0;
+inline constexpr int ControllerSurfaceControlTypeButton = 1;
 inline constexpr int ControllerSurfaceMapSlotCount =
     ControllerSlotCount * ControllerPatternCount * ControllerTargetChannelCount * ControllerSurfaceControlCount * ControllerLayerCount;
 
@@ -52,6 +54,11 @@ inline int controllerSurfaceMapIndex(int controllerSlot, int pattern, int target
 inline bool isControllerFaderControl(int control)
 {
     return control >= 0 && control < ControllerFaderCount;
+}
+
+inline juce::String controllerSurfaceControlTypeName(int type)
+{
+    return type == ControllerSurfaceControlTypeButton ? "Button" : "Value";
 }
 
 inline juce::String controllerSurfaceControlName(int control)
