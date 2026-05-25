@@ -84,7 +84,11 @@ public:
     void setSurfaceMapSnapshot(int controller, int control, int layer, int pattern, int targetChannel, const SurfaceMapSnapshot& snapshot) noexcept;
     void learnSurfaceMap(int controller, int control, int layer, int pattern, int targetChannel, const ControllerSnapshot& snapshot) noexcept;
     void refreshHardwareMidiInputs();
+    std::vector<juce::MidiDeviceInfo> availableMidiInputs() const;
     juce::StringArray activeHardwareInputNames() const;
+    juce::StringArray controllerSlotDeviceNames() const;
+    juce::String controllerSlotDeviceIdentifier(int slot) const;
+    void setControllerSlotDeviceIdentifier(int slot, const juce::String& identifier);
     int activeHardwareInputCount() const noexcept { return activeHardwareInputCount_.load(std::memory_order_relaxed); }
 
 private:
@@ -184,6 +188,9 @@ private:
                                    size_t& outputCount) noexcept;
     juce::ValueTree createControllerSurfaceMapsState() const;
     void restoreControllerSurfaceMapsState(const juce::ValueTree& state);
+    juce::ValueTree createControllerDeviceSlotsState() const;
+    void restoreControllerDeviceSlotsState(const juce::ValueTree& state);
+    void assignDefaultControllerSlotsIfNeeded(const std::vector<juce::MidiDeviceInfo>& devices);
     void closeHardwareMidiInputs();
     bool shouldCaptureHardwareInputs() const noexcept;
     static bool isPreferredHardwareInput(const juce::MidiDeviceInfo& device);
@@ -208,8 +215,11 @@ private:
     std::unique_ptr<juce::MidiOutput> virtualMidiOutput_;
     std::vector<HardwareMidiInput> hardwareMidiInputs_;
     juce::StringArray activeHardwareInputNames_;
+    std::array<juce::String, ControllerSlotCount> controllerSlotDeviceIdentifiers_{};
+    std::array<juce::String, ControllerSlotCount> controllerSlotDeviceNames_{};
     mutable std::mutex hardwareMidiInputsMutex_;
     double sampleRate_{ 44100.0 };
+    bool controllerSlotAssignmentsManual_{ false };
     std::atomic<int> activeHardwareInputCount_{ 0 };
     std::atomic<int> lastTrack_{ -1 };
     std::atomic<int> lastScene_{ -1 };

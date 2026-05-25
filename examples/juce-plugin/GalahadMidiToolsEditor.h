@@ -30,6 +30,7 @@ private:
     void finishLearn(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot);
     void finishSurfaceLearn(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot);
     void refreshLearningState();
+    void refreshDeviceSelectors();
     void refreshSurfaceRows();
     void updateHardwareStatus();
     void updateSetupState();
@@ -40,6 +41,7 @@ private:
     juce::Label titleLabel_;
     juce::Label versionLabel_;
     juce::Label hardwareLabel_;
+    juce::Label deviceLabel_;
     juce::ToggleButton hardwareCaptureButton_;
     juce::TextButton rescanButton_;
     juce::ToggleButton thruButton_;
@@ -64,6 +66,8 @@ private:
     juce::Viewport surfaceViewport_;
     std::unique_ptr<SurfaceRowsContent> surfaceRowsContent_;
     std::array<std::unique_ptr<SurfaceRow>, galahad::plugin::ControllerSurfaceControlCount> surfaceRows_;
+    std::array<juce::ComboBox, galahad::plugin::ControllerSlotCount> deviceSelectors_;
+    juce::StringArray deviceSelectorIdentifiers_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> hardwareCaptureAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> thruAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> surfaceControllerAttachment_;
@@ -95,6 +99,7 @@ private:
     int lastSurfaceMap_{ -1 };
     int lastSurfacePattern_{ -1 };
     int lastSurfaceTargetChannel_{ -1 };
+    bool refreshingDeviceSelectors_{ false };
     bool lastHardwareCaptureState_{ true };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GalahadMidiToolsEditor)

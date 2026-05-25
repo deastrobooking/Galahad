@@ -5,8 +5,8 @@
 
 namespace
 {
-constexpr int EditorWidth = 1040;
-constexpr int EditorHeight = 1060;
+constexpr int EditorWidth = 1120;
+constexpr int EditorHeight = 1100;
 constexpr int Margin = 18;
 constexpr int RowHeight = 70;
 constexpr int SurfaceRowHeight = 54;
@@ -88,7 +88,7 @@ juce::Rectangle<int> takeColumn(juce::Rectangle<int>& area, int width)
 juce::String hardwareStatusText(const juce::StringArray& names)
 {
     if (names.isEmpty())
-        return "No Akai/Novation inputs opened";
+        return "No controller inputs opened";
 
     return "Opened: " + names.joinIntoString(", ");
 }
@@ -647,6 +647,12 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
     hardwareLabel_.setFont(juce::FontOptions(13.0f));
     addAndMakeVisible(hardwareLabel_);
 
+    deviceLabel_.setText("MIDI Inputs", juce::dontSendNotification);
+    deviceLabel_.setJustificationType(juce::Justification::centredLeft);
+    deviceLabel_.setColour(juce::Label::textColourId, MutedText);
+    deviceLabel_.setFont(juce::FontOptions(13.0f, juce::Font::bold));
+    addAndMakeVisible(deviceLabel_);
+
     setupLabel_.setText("Setup", juce::dontSendNotification);
     setupLabel_.setJustificationType(juce::Justification::centredLeft);
     setupLabel_.setColour(juce::Label::textColourId, Text);
@@ -676,9 +682,34 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
         button.onClick = [this, slot] {
             selectedControllerSlot_ = slot;
             setChoiceParameter(processor_.parameters(), galahad::plugin::SurfaceEditControllerId, slot);
+            refreshSurfaceRows();
             updateSetupState();
         };
         addAndMakeVisible(button);
+    }
+
+    for (int slot = 0; slot < static_cast<int>(deviceSelectors_.size()); ++slot)
+    {
+        auto& selector = deviceSelectors_[static_cast<size_t>(slot)];
+        configureCombo(selector);
+        selector.onChange = [this, slot] {
+            if (refreshingDeviceSelectors_)
+                return;
+
+            const int selectedId = deviceSelectors_[static_cast<size_t>(slot)].getSelectedId();
+            juce::String identifier;
+            if (selectedId >= 2 && selectedId < 2 + deviceSelectorIdentifiers_.size())
+                identifier = deviceSelectorIdentifiers_[selectedId - 2];
+            else if (selectedId >= 1000)
+                identifier = processor_.controllerSlotDeviceIdentifier(slot);
+
+            processor_.setControllerSlotDeviceIdentifier(slot, identifier);
+            refreshDeviceSelectors();
+            updateHardwareStatus();
+            refreshSurfaceRows();
+            lastHardwareInputCount_ = processor_.activeHardwareInputCount();
+        };
+        addAndMakeVisible(selector);
     }
 
     for (int layer = 0; layer < static_cast<int>(layerButtons_.size()); ++layer)
@@ -690,6 +721,7 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
             selectedLayer_ = layer;
             setChoiceParameter(processor_.parameters(), galahad::plugin::ControllerLayerId, layer);
             setChoiceParameter(processor_.parameters(), galahad::plugin::SurfaceEditLayerId, layer);
+            refreshSurfaceRows();
             updateSetupState();
         };
         addAndMakeVisible(button);
@@ -702,6 +734,7 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
         button->onClick = [this, channel] {
             selectedTargetChannel_ = channel + 1;
             setChoiceParameter(processor_.parameters(), galahad::plugin::ControllerTargetChannelId, channel);
+            refreshSurfaceRows();
             updateSetupState();
         };
         addAndMakeVisible(*button);
@@ -715,6 +748,7 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
         button->onClick = [this, clip] {
             selectedAutomationSlot_ = clip;
             setChoiceParameter(processor_.parameters(), galahad::plugin::ControllerPatternId, clip);
+            refreshSurfaceRows();
             updateSetupState();
         };
         addAndMakeVisible(*button);
@@ -763,7 +797,6 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
     surfaceRowsContent_ = std::make_unique<SurfaceRowsContent>(*this);
     surfaceViewport_.setScrollBarsShown(true, false);
     surfaceViewport_.setViewedComponent(surfaceRowsContent_.get(), false);
-    surfaceViewport_.setColour(juce::Viewport::backgroundColourId, Background);
     addAndMakeVisible(surfaceViewport_);
     for (int control = 0; control < static_cast<int>(surfaceRows_.size()); ++control)
     {
@@ -784,7 +817,9 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
     rescanButton_.setColour(juce::TextButton::textColourOffId, Text);
     rescanButton_.onClick = [this] {
         processor_.refreshHardwareMidiInputs();
+        refreshDeviceSelectors();
         updateHardwareStatus();
+        refreshSurfaceRows();
         lastHardwareInputCount_ = processor_.activeHardwareInputCount();
     };
     addAndMakeVisible(rescanButton_);
@@ -850,6 +885,7 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
 
     processor_.refreshHardwareMidiInputs();
     processor_.syncAndLoadSurfaceEditorSelection();
+    refreshDeviceSelectors();
     updateHardwareStatus();
     updateSetupState();
     refreshSurfaceRows();
@@ -868,7 +904,7 @@ void GalahadMidiToolsEditor::paint(juce::Graphics& graphics)
     graphics.fillAll(Background);
 
     auto area = getLocalBounds().reduced(Margin);
-    area.removeFromTop(650);
+    area.removeFromTop(690);
 
     graphics.setColour(MutedText);
     graphics.setFont(12.0f);
@@ -886,6 +922,7 @@ void GalahadMidiToolsEditor::paint(juce::Graphics& graphics)
     auto setup = getLocalBounds().reduced(Margin);
     setup.removeFromTop(78);
     setup.removeFromTop(42);
+    setup.removeFromTop(40);
     setup.removeFromTop(8);
     auto lower = setup.removeFromTop(140);
     auto clips = lower.removeFromLeft(170);
@@ -900,7 +937,7 @@ void GalahadMidiToolsEditor::paint(juce::Graphics& graphics)
     graphics.drawText("Target Channel", lower.removeFromTop(18), juce::Justification::centredLeft);
 
     auto surface = getLocalBounds().reduced(Margin);
-    surface.removeFromTop(48 + 22 + 8 + 42 + 8 + 140);
+    surface.removeFromTop(48 + 22 + 8 + 42 + 40 + 8 + 140);
     surface.removeFromTop(28);
     auto surfaceHeader = surface.removeFromTop(18);
     graphics.drawText("Control", takeColumn(surfaceHeader, SurfaceControlWidth), juce::Justification::centredLeft);
@@ -931,6 +968,12 @@ void GalahadMidiToolsEditor::resized()
     const int controllerButtonWidth = controllerRow.getWidth() / static_cast<int>(controllerButtons_.size());
     for (auto& button : controllerButtons_)
         button.setBounds(controllerRow.removeFromLeft(controllerButtonWidth).reduced(3, 4));
+
+    auto deviceRow = area.removeFromTop(40);
+    deviceLabel_.setBounds(deviceRow.removeFromLeft(88));
+    const int deviceSelectorWidth = deviceRow.getWidth() / static_cast<int>(deviceSelectors_.size());
+    for (auto& selector : deviceSelectors_)
+        selector.setBounds(deviceRow.removeFromLeft(deviceSelectorWidth).reduced(3, 6));
 
     area.removeFromTop(8);
     auto setupArea = area.removeFromTop(140);
@@ -1007,6 +1050,7 @@ void GalahadMidiToolsEditor::timerCallback()
     {
         lastHardwareCaptureState_ = captureState;
         processor_.refreshHardwareMidiInputs();
+        refreshDeviceSelectors();
         updateHardwareStatus();
         lastHardwareInputCount_ = processor_.activeHardwareInputCount();
     }
@@ -1026,6 +1070,7 @@ void GalahadMidiToolsEditor::timerCallback()
         if (activeLayer != selectedLayer_)
         {
             selectedLayer_ = activeLayer;
+            refreshSurfaceRows();
             updateSetupState();
         }
     }
@@ -1038,6 +1083,7 @@ void GalahadMidiToolsEditor::timerCallback()
         if (activePattern != selectedAutomationSlot_)
         {
             selectedAutomationSlot_ = activePattern;
+            refreshSurfaceRows();
             updateSetupState();
         }
     }
@@ -1050,6 +1096,7 @@ void GalahadMidiToolsEditor::timerCallback()
         if (activeTargetChannel != selectedTargetChannel_)
         {
             selectedTargetChannel_ = activeTargetChannel;
+            refreshSurfaceRows();
             updateSetupState();
         }
     }
@@ -1072,6 +1119,7 @@ void GalahadMidiToolsEditor::timerCallback()
         lastSurfacePattern_ = surfacePattern;
         lastSurfaceTargetChannel_ = surfaceTargetChannel;
         processor_.syncAndLoadSurfaceEditorSelection();
+        refreshSurfaceRows();
         updateSetupState();
     }
 
@@ -1093,6 +1141,8 @@ void GalahadMidiToolsEditor::timerCallback()
 
     if (learningSlot_ >= 0 && input.serial != learnStartSerial_ && input.controller >= 0)
         finishLearn(input);
+    if (surfaceLearningControl_ >= 0 && input.serial != surfaceLearnStartSerial_ && input.controller >= 0)
+        finishSurfaceLearn(input);
 
     activityView_->decay();
     for (auto& row : rows_)
@@ -1113,6 +1163,21 @@ void GalahadMidiToolsEditor::beginLearn(int slot)
     refreshLearningState();
 }
 
+void GalahadMidiToolsEditor::beginSurfaceLearn(int control)
+{
+    if (surfaceLearningControl_ == control)
+        surfaceLearningControl_ = -1;
+    else
+    {
+        surfaceLearningControl_ = control;
+        surfaceLearnStartSerial_ = processor_.lastControllerInput().serial;
+        selectedSurfaceControl_ = juce::jlimit(0, galahad::plugin::ControllerSurfaceControlCount - 1, control);
+    }
+
+    refreshLearningState();
+    refreshSurfaceRows();
+}
+
 void GalahadMidiToolsEditor::finishLearn(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot)
 {
     if (learningSlot_ >= 0 && learningSlot_ < static_cast<int>(rows_.size()))
@@ -1122,19 +1187,76 @@ void GalahadMidiToolsEditor::finishLearn(const GalahadMidiToolsProcessor::Contro
     refreshLearningState();
 }
 
+void GalahadMidiToolsEditor::finishSurfaceLearn(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot)
+{
+    if (surfaceLearningControl_ >= 0 && surfaceLearningControl_ < static_cast<int>(surfaceRows_.size()))
+        surfaceRows_[static_cast<size_t>(surfaceLearningControl_)]->learnFrom(snapshot);
+
+    surfaceLearningControl_ = -1;
+    refreshLearningState();
+    refreshSurfaceRows();
+    updateSurfaceSummary();
+}
+
 void GalahadMidiToolsEditor::refreshLearningState()
 {
     for (int slot = 0; slot < static_cast<int>(rows_.size()); ++slot)
         rows_[static_cast<size_t>(slot)]->setLearning(slot == learningSlot_);
+
+    for (int control = 0; control < static_cast<int>(surfaceRows_.size()); ++control)
+        if (surfaceRows_[static_cast<size_t>(control)] != nullptr)
+            surfaceRows_[static_cast<size_t>(control)]->setLearning(control == surfaceLearningControl_);
+}
+
+void GalahadMidiToolsEditor::refreshDeviceSelectors()
+{
+    refreshingDeviceSelectors_ = true;
+    deviceSelectorIdentifiers_.clear();
+
+    const auto devices = processor_.availableMidiInputs();
+    for (const auto& device : devices)
+        deviceSelectorIdentifiers_.add(device.identifier);
+
+    const auto slotNames = processor_.controllerSlotDeviceNames();
+    for (int slot = 0; slot < static_cast<int>(deviceSelectors_.size()); ++slot)
+    {
+        auto& selector = deviceSelectors_[static_cast<size_t>(slot)];
+        selector.clear(juce::dontSendNotification);
+        selector.addItem("None", 1);
+
+        int selectedId = 1;
+        const auto currentIdentifier = processor_.controllerSlotDeviceIdentifier(slot);
+        for (int deviceIndex = 0; deviceIndex < static_cast<int>(devices.size()); ++deviceIndex)
+        {
+            const int itemId = deviceIndex + 2;
+            selector.addItem(devices[static_cast<size_t>(deviceIndex)].name, itemId);
+            if (devices[static_cast<size_t>(deviceIndex)].identifier == currentIdentifier)
+                selectedId = itemId;
+        }
+
+        if (selectedId == 1 && currentIdentifier.isNotEmpty())
+        {
+            const auto missingName = slot < slotNames.size() ? slotNames[slot] : juce::String("Missing device");
+            selectedId = 1000 + slot;
+            selector.addItem(missingName, selectedId);
+        }
+
+        selector.setSelectedId(selectedId, juce::dontSendNotification);
+    }
+
+    refreshingDeviceSelectors_ = false;
+}
+
+void GalahadMidiToolsEditor::refreshSurfaceRows()
+{
+    for (auto& row : surfaceRows_)
+        if (row != nullptr)
+            row->refresh();
 }
 
 void GalahadMidiToolsEditor::updateHardwareStatus()
 {
     hardwareLabel_.setText(hardwareStatusText(processor_.activeHardwareInputNames()), juce::dontSendNotification);
-
-    if (selectedControllerSlot_ >= processor_.activeHardwareInputNames().size()
-        && ! processor_.activeHardwareInputNames().isEmpty())
-        selectedControllerSlot_ = processor_.activeHardwareInputNames().size() - 1;
 
     updateSetupState();
 }
@@ -1209,7 +1331,7 @@ void GalahadMidiToolsEditor::updateSurfaceSummary()
 
 juce::String GalahadMidiToolsEditor::controllerSlotText(int slot) const
 {
-    const auto names = processor_.activeHardwareInputNames();
+    const auto names = processor_.controllerSlotDeviceNames();
     juce::String name = slot < names.size() ? names[slot] : "Slot " + juce::String(slot + 1);
 
     name = name.replace("Launch Control", "LaunchCtl")

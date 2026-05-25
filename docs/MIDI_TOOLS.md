@@ -186,6 +186,7 @@ The plugin editor starts with a master setup page for performance mapping:
 
 ```text
 Controller slots  1..8 visible hardware/controller contexts
+MIDI Inputs       one device selector per controller slot
 Layer buttons     A..D performance mapping contexts
 Target channels   1..16 quick channel focus buttons
 Clip circles      C1..C4 automation clip contexts
@@ -201,6 +202,12 @@ and 1-16 channel circles update those parameters. Surface mappings are evaluated
 only for the hardware input slot that produced the MIDI event, so two controllers
 can use the same CC numbers without colliding once Galahad has opened them
 directly.
+
+The `MIDI Inputs` row lists every MIDI input JUCE can see on the computer, not
+only the old Akai/Novation auto-capture list. Pick a device under controller
+slot 1..8 to bind that hardware input to the slot. Those assignments are saved
+with the plugin state and are restored on reload; `Rescan` refreshes the device
+list after plugging in or removing controllers.
 
 Surface assignments are saved per controller, pattern, target channel, control,
 and map layer. After a mapped control has produced a CC value, that last value is
@@ -219,10 +226,16 @@ Controller Pattern      = clip context C1..C4
 Controller Target Ch    = focused channel 1..16
 ```
 
-The plugin GUI shows the same focused assignment panel, including a summary like
-`C1 Fader 1 P1 Ch 1 Map 1: On Omni CC 7 -> Ch 1 CC 74 0..127`. Changing the
-fields below writes them into the selected controller/control/pattern/channel/map
-entry:
+The plugin GUI shows the selected controller/pattern/channel as a scrollable
+surface assignment table. The 23 rows represent `Fader 1..8` and `Button 1..15`.
+Each row has four map buttons, a `Map` enable button, `Learn`, input/output
+channel and CC fields, and a min/max range. Assigned map buttons use accent
+colours, the `Map` button turns active when that row/layer is enabled, and
+`Learn` lights when the input has been captured.
+
+The focused summary still mirrors the selected row, for example
+`C1 Fader 1 P1 Ch 1 Map 1: On Omni CC 7 -> Ch 1 CC 74 0..127`. Changing a row
+writes into the selected controller/control/pattern/channel/map entry:
 
 ```text
 Surface Map On
@@ -244,8 +257,9 @@ The editor includes four controller-map slots for Drop-style performance
 layering:
 
 ```text
-Hardware     opens Akai/Novation controller inputs directly
-Rescan       rechecks connected MIDI inputs
+Hardware     enables direct controller input capture
+MIDI Inputs  assigns connected MIDI devices to controller slots 1..8
+Rescan       rechecks connected MIDI inputs and reopens assigned devices
 Map On       enables the slot
 Learn        captures the next incoming CC into the input channel and CC fields
 Input        matches a specific channel or Omni
@@ -262,7 +276,8 @@ mapped outputs on top of the original controller stream.
 The editor visualizes the last incoming CC, the last mapped output, and per-slot
 activity.
 
-Hardware capture currently auto-opens input devices whose names include:
+If no manual slot assignments have been made, hardware capture still auto-fills
+controller slots from input devices whose names include:
 
 ```text
 Akai

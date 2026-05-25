@@ -38,6 +38,8 @@ constexpr const char* RouteCcsId = "routeCcs";
 
 const juce::Identifier SurfaceMapsStateId{ "ControllerSurfaceMaps" };
 const juce::Identifier SurfaceMapStateId{ "Map" };
+const juce::Identifier ControllerDeviceSlotsStateId{ "ControllerDeviceSlots" };
+const juce::Identifier ControllerDeviceSlotStateId{ "Slot" };
 
 float valueOf(const juce::AudioProcessorValueTreeState& state, const char* id) noexcept
 {
@@ -309,6 +311,7 @@ void GalahadMidiToolsProcessor::getStateInformation(juce::MemoryBlock& destData)
     if (auto state = parameters_.copyState(); state.isValid())
     {
         state.addChild(createControllerSurfaceMapsState(), -1, nullptr);
+        state.addChild(createControllerDeviceSlotsState(), -1, nullptr);
         if (auto xml = state.createXml())
             copyXmlToBinary(*xml, destData);
     }
@@ -322,10 +325,15 @@ void GalahadMidiToolsProcessor::setStateInformation(const void* data, int sizeIn
         {
             auto state = juce::ValueTree::fromXml(*xml);
             const auto surfaceMapsState = state.getChildWithName(SurfaceMapsStateId);
+            const auto controllerDeviceSlotsState = state.getChildWithName(ControllerDeviceSlotsStateId);
             restoreControllerSurfaceMapsState(surfaceMapsState);
             if (surfaceMapsState.isValid())
                 state.removeChild(surfaceMapsState, nullptr);
+            if (controllerDeviceSlotsState.isValid())
+                state.removeChild(controllerDeviceSlotsState, nullptr);
             parameters_.replaceState(state);
+            restoreControllerDeviceSlotsState(controllerDeviceSlotsState);
+            refreshHardwareMidiInputs();
         }
     }
 }
@@ -531,6 +539,7 @@ void GalahadMidiToolsProcessor::ensureVirtualMidiOutput()
 
 void GalahadMidiToolsProcessor::refreshHardwareMidiInputs()
 {
+    const auto devices = availableMidiInputs();
     const std::lock_guard lock(hardwareMidiInputsMutex_);
 
     for (auto& hardware : hardwareMidiInputs_)
@@ -540,6 +549,7 @@ void GalahadMidiToolsProcessor::refreshHardwareMidiInputs()
     }
     hardwareMidiInputs_.clear();
     activeHardwareInputNames_.clear();
+    assignDefaultControllerSlotsIfNeeded(devices);
 
     if (!shouldCaptureHardwareInputs())
     {
@@ -547,37 +557,223 @@ void GalahadMidiToolsProcessor::refreshHardwareMidiInputs()
         return;
     }
 
-    int slot = 0;
-    for (const auto& device : juce::MidiInput::getAvailableDevices())
+    juce::StringArray openedIdentifiers;
+    for (int slot = 0; slot < ControllerSlotCount; ++slot)
     {
-        if (slot >= ControllerSlotCount)
-            break;
+        const auto identifier = controllerSlotDeviceIdentifiers_[static_cast<size_t>(slot)];
+        if (identifier.isEmpty() || openedIdentifiers.contains(identifier))
+            continue;
 
-        if (!isPreferredHardwareInput(device))
+        const juce::MidiDeviceInfo* selectedDevice = nullptr;
+        for (const auto& device : devices)
+        {
+            if (device.identifier == identifier)
+            {
+                selectedDevice = &device;
+                break;
+            }
+        }
+
+        if (selectedDevice == nullptr)
             continue;
 
         HardwareMidiInput hardware;
         hardware.slot = slot;
-        hardware.name = device.name;
+        hardware.name = selectedDevice->name;
         hardware.collector = std::make_unique<juce::MidiMessageCollector>();
         hardware.collector->reset(sampleRate_);
-        hardware.input = juce::MidiInput::openDevice(device.identifier, hardware.collector.get());
+        hardware.input = juce::MidiInput::openDevice(selectedDevice->identifier, hardware.collector.get());
         if (hardware.input == nullptr)
             continue;
 
         hardware.input->start();
-        activeHardwareInputNames_.add(device.name);
+        activeHardwareInputNames_.add("C" + juce::String(slot + 1) + ": " + selectedDevice->name);
         hardwareMidiInputs_.push_back(std::move(hardware));
-        ++slot;
+        openedIdentifiers.add(identifier);
     }
 
     activeHardwareInputCount_.store(static_cast<int>(hardwareMidiInputs_.size()), std::memory_order_relaxed);
+}
+
+std::vector<juce::MidiDeviceInfo> GalahadMidiToolsProcessor::availableMidiInputs() const
+{
+    std::vector<juce::MidiDeviceInfo> devices;
+    for (const auto& device : juce::MidiInput::getAvailableDevices())
+        devices.push_back(device);
+
+    return devices;
 }
 
 juce::StringArray GalahadMidiToolsProcessor::activeHardwareInputNames() const
 {
     const std::lock_guard lock(hardwareMidiInputsMutex_);
     return activeHardwareInputNames_;
+}
+
+juce::StringArray GalahadMidiToolsProcessor::controllerSlotDeviceNames() const
+{
+    const std::lock_guard lock(hardwareMidiInputsMutex_);
+
+    juce::StringArray names;
+    for (const auto& name : controllerSlotDeviceNames_)
+        names.add(name.isNotEmpty() ? name : "None");
+
+    return names;
+}
+
+juce::String GalahadMidiToolsProcessor::controllerSlotDeviceIdentifier(int slot) const
+{
+    slot = juce::jlimit(0, ControllerSlotCount - 1, slot);
+    const std::lock_guard lock(hardwareMidiInputsMutex_);
+    return controllerSlotDeviceIdentifiers_[static_cast<size_t>(slot)];
+}
+
+void GalahadMidiToolsProcessor::setControllerSlotDeviceIdentifier(int slot, const juce::String& identifier)
+{
+    slot = juce::jlimit(0, ControllerSlotCount - 1, slot);
+    const auto devices = availableMidiInputs();
+
+    juce::String resolvedName;
+    for (const auto& device : devices)
+    {
+        if (device.identifier == identifier)
+        {
+            resolvedName = device.name;
+            break;
+        }
+    }
+
+    {
+        const std::lock_guard lock(hardwareMidiInputsMutex_);
+        auto& slotIdentifier = controllerSlotDeviceIdentifiers_[static_cast<size_t>(slot)];
+        auto& slotName = controllerSlotDeviceNames_[static_cast<size_t>(slot)];
+
+        controllerSlotAssignmentsManual_ = true;
+        slotIdentifier = identifier;
+        if (identifier.isEmpty())
+            slotName.clear();
+        else if (resolvedName.isNotEmpty())
+            slotName = resolvedName;
+        else if (slotName.isEmpty())
+            slotName = "Missing device";
+    }
+
+    refreshHardwareMidiInputs();
+}
+
+juce::ValueTree GalahadMidiToolsProcessor::createControllerDeviceSlotsState() const
+{
+    juce::ValueTree state{ ControllerDeviceSlotsStateId };
+
+    const std::lock_guard lock(hardwareMidiInputsMutex_);
+    state.setProperty("manual", controllerSlotAssignmentsManual_ ? 1 : 0, nullptr);
+
+    if (!controllerSlotAssignmentsManual_)
+        return state;
+
+    for (int slot = 0; slot < ControllerSlotCount; ++slot)
+    {
+        const auto& identifier = controllerSlotDeviceIdentifiers_[static_cast<size_t>(slot)];
+        const auto& name = controllerSlotDeviceNames_[static_cast<size_t>(slot)];
+        if (identifier.isEmpty() && name.isEmpty())
+            continue;
+
+        juce::ValueTree child{ ControllerDeviceSlotStateId };
+        child.setProperty("slot", slot, nullptr);
+        child.setProperty("identifier", identifier, nullptr);
+        child.setProperty("name", name, nullptr);
+        state.addChild(child, -1, nullptr);
+    }
+
+    return state;
+}
+
+void GalahadMidiToolsProcessor::restoreControllerDeviceSlotsState(const juce::ValueTree& state)
+{
+    const std::lock_guard lock(hardwareMidiInputsMutex_);
+
+    for (auto& identifier : controllerSlotDeviceIdentifiers_)
+        identifier.clear();
+    for (auto& name : controllerSlotDeviceNames_)
+        name.clear();
+    controllerSlotAssignmentsManual_ = false;
+
+    if (!state.isValid())
+        return;
+
+    controllerSlotAssignmentsManual_ = static_cast<int>(state.getProperty("manual", 0)) != 0;
+    for (int childIndex = 0; childIndex < state.getNumChildren(); ++childIndex)
+    {
+        const auto child = state.getChild(childIndex);
+        if (!child.hasType(ControllerDeviceSlotStateId))
+            continue;
+
+        const int slot = juce::jlimit(0, ControllerSlotCount - 1, static_cast<int>(child.getProperty("slot", 0)));
+        controllerSlotDeviceIdentifiers_[static_cast<size_t>(slot)] = child.getProperty("identifier", juce::var{}).toString();
+        controllerSlotDeviceNames_[static_cast<size_t>(slot)] = child.getProperty("name", juce::var{}).toString();
+    }
+}
+
+void GalahadMidiToolsProcessor::assignDefaultControllerSlotsIfNeeded(const std::vector<juce::MidiDeviceInfo>& devices)
+{
+    if (!controllerSlotAssignmentsManual_)
+    {
+        for (auto& identifier : controllerSlotDeviceIdentifiers_)
+            identifier.clear();
+        for (auto& name : controllerSlotDeviceNames_)
+            name.clear();
+
+        int slot = 0;
+        for (const auto& device : devices)
+        {
+            if (slot >= ControllerSlotCount)
+                break;
+
+            if (!isPreferredHardwareInput(device))
+                continue;
+
+            controllerSlotDeviceIdentifiers_[static_cast<size_t>(slot)] = device.identifier;
+            controllerSlotDeviceNames_[static_cast<size_t>(slot)] = device.name;
+            ++slot;
+        }
+
+        return;
+    }
+
+    for (int slot = 0; slot < ControllerSlotCount; ++slot)
+    {
+        const auto& identifier = controllerSlotDeviceIdentifiers_[static_cast<size_t>(slot)];
+        auto& name = controllerSlotDeviceNames_[static_cast<size_t>(slot)];
+
+        if (identifier.isEmpty())
+        {
+            name.clear();
+            continue;
+        }
+
+        juce::String resolvedName;
+        for (const auto& device : devices)
+        {
+            if (device.identifier == identifier)
+            {
+                resolvedName = device.name;
+                break;
+            }
+        }
+
+        if (resolvedName.isNotEmpty())
+        {
+            name = resolvedName;
+        }
+        else if (name.isEmpty())
+        {
+            name = "Missing device";
+        }
+        else if (!name.endsWithIgnoreCase(" (missing)"))
+        {
+            name += " (missing)";
+        }
+    }
 }
 
 void GalahadMidiToolsProcessor::closeHardwareMidiInputs()
