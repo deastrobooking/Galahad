@@ -220,18 +220,26 @@ parameter. Instead, use the compact focused editor parameters:
 
 ```text
 Surface Edit Controller = controller slot 1..8
-Surface Edit Control    = Fader 1..8 or Button 1..15
+Surface Edit Control    = focused profile row, default Fader 1..8 / Button 1..15
 Surface Edit Map        = Map 1..4 for that control
 Controller Pattern      = clip context C1..C4
 Controller Target Ch    = focused channel 1..16
 ```
 
 The plugin GUI shows the selected controller/pattern/channel as a scrollable
-surface assignment table. The 23 rows represent `Fader 1..8` and `Button 1..15`.
-Each row has four map buttons, a `Map` enable button, `Learn`, input/output
-channel and CC fields, and a min/max range. Assigned map buttons use accent
-colours, the `Map` button turns active when that row/layer is enabled, and
-`Learn` lights when the input has been captured.
+surface assignment table. Each controller slot has a configurable control
+profile with up to 23 rows. The default profile starts as `Fader 1..8` and
+`Button 1..15`, but rows can be removed, added back as `Value` or `Button`
+controls, and retagged at any time. Hidden rows do not map incoming hardware
+events or recall saved values.
+
+Each row has a type selector, four map buttons, a `Map` enable button, `Learn`,
+input/output channel and CC fields, a min/max range, and a remove button.
+Assigned map buttons use accent colours, the `Map` button turns active when that
+row/layer is enabled, and `Learn` lights when the input has been captured.
+`Value` rows scale the incoming 0..127 controller value through min/max.
+`Button` rows treat values below 64 as off and values 64 or higher as on,
+emitting min for off and max for on.
 
 The focused summary still mirrors the selected row, for example
 `C1 Fader 1 P1 Ch 1 Map 1: On Omni CC 7 -> Ch 1 CC 74 0..127`. Changing a row
@@ -246,6 +254,10 @@ Surface Out CC
 Surface Min
 Surface Max
 ```
+
+Controller control profiles are saved with the plugin state, separately from the
+per-layer mapping values. Removing a row hides it and stops it from firing, but
+the underlying mapping slot is preserved if the row is added back later.
 
 The compact four-row mapper remains available as a legacy/global mapper and
 still works for host-routed MIDI input. The 8-controller surface mapper is meant

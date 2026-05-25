@@ -32,6 +32,9 @@ private:
     void refreshLearningState();
     void refreshDeviceSelectors();
     void refreshSurfaceRows();
+    void addSurfaceControl(int type);
+    void removeSurfaceControl(int control);
+    void ensureSelectedSurfaceControlActive();
     void updateHardwareStatus();
     void updateSetupState();
     void updateSurfaceSummary();
@@ -49,6 +52,8 @@ private:
     juce::Label contextLabel_;
     juce::Label surfaceLabel_;
     juce::Label surfaceSummaryLabel_;
+    juce::TextButton addValueControlButton_;
+    juce::TextButton addButtonControlButton_;
     std::array<juce::TextButton, 8> controllerButtons_;
     std::array<juce::TextButton, 4> layerButtons_;
     std::array<std::unique_ptr<CircleButton>, 16> channelButtons_;
