@@ -28,6 +28,24 @@ public:
         int serial{ 0 };
     };
 
+    struct SurfaceMapSnapshot
+    {
+        int enabled{ 0 };
+        int inputChannel{ 0 };
+        int inputCc{ 0 };
+        int outputChannel{ 0 };
+        int outputCc{ 0 };
+        int minimum{ 0 };
+        int maximum{ 127 };
+        int value{ 0 };
+        int inputSet{ 0 };
+        int valueSet{ 0 };
+
+        bool hasInputAssignment() const noexcept { return inputSet != 0; }
+        bool hasMapAssignment() const noexcept { return enabled != 0; }
+        bool hasAnyAssignment() const noexcept { return hasInputAssignment() || hasMapAssignment(); }
+    };
+
     GalahadMidiToolsProcessor();
     ~GalahadMidiToolsProcessor() override;
 
@@ -61,6 +79,10 @@ public:
     ControllerSnapshot lastControllerOutput() const noexcept;
     juce::AudioProcessorValueTreeState& parameters() noexcept { return parameters_; }
     void syncAndLoadSurfaceEditorSelection();
+    void loadSurfaceEditorFromMap(int controller, int control, int layer, int pattern, int targetChannel);
+    SurfaceMapSnapshot surfaceMapSnapshot(int controller, int control, int layer, int pattern, int targetChannel) const noexcept;
+    void setSurfaceMapSnapshot(int controller, int control, int layer, int pattern, int targetChannel, const SurfaceMapSnapshot& snapshot) noexcept;
+    void learnSurfaceMap(int controller, int control, int layer, int pattern, int targetChannel, const ControllerSnapshot& snapshot) noexcept;
     void refreshHardwareMidiInputs();
     juce::StringArray activeHardwareInputNames() const;
     int activeHardwareInputCount() const noexcept { return activeHardwareInputCount_.load(std::memory_order_relaxed); }
@@ -96,6 +118,7 @@ private:
         std::atomic<int> minimum{ 0 };
         std::atomic<int> maximum{ 127 };
         std::atomic<int> value{ 0 };
+        std::atomic<int> inputSet{ 0 };
         std::atomic<int> valueSet{ 0 };
     };
 
@@ -154,7 +177,6 @@ private:
     void cacheControllerMapParameters();
     void initializeControllerSurfaceMaps() noexcept;
     void syncSurfaceEditorToSelectedMap() noexcept;
-    void loadSurfaceEditorFromMap(int controller, int control, int layer, int pattern, int targetChannel);
     void setSurfaceEditorParameter(const char* id, float value);
     SurfacePerformanceContext currentSurfacePerformanceContext() const noexcept;
     void appendSurfaceRecallEvents(const SurfacePerformanceContext& context,

@@ -6,10 +6,18 @@
 namespace
 {
 constexpr int EditorWidth = 1040;
-constexpr int EditorHeight = 880;
+constexpr int EditorHeight = 1060;
 constexpr int Margin = 18;
 constexpr int RowHeight = 70;
+constexpr int SurfaceRowHeight = 54;
 constexpr int Gap = 10;
+constexpr int SurfaceControlWidth = 96;
+constexpr int SurfaceLayersWidth = 130;
+constexpr int SurfaceMapWidth = 62;
+constexpr int SurfaceLearnWidth = 72;
+constexpr int SurfaceChannelWidth = 80;
+constexpr int SurfaceCcWidth = 98;
+constexpr int SurfaceRangeWidth = 88;
 
 const juce::Colour Background{ 0xff11151c };
 const juce::Colour Panel{ 0xff1a202a };
@@ -59,6 +67,14 @@ void configurePanelButton(juce::TextButton& button, juce::Colour accent)
     button.setColour(juce::TextButton::buttonColourId, PanelAlt);
     button.setColour(juce::TextButton::buttonOnColourId, accent);
     button.setColour(juce::TextButton::textColourOffId, Text);
+    button.setColour(juce::TextButton::textColourOnId, Background);
+}
+
+void setStatusButtonColours(juce::TextButton& button, bool active, bool assigned, juce::Colour accent)
+{
+    button.setColour(juce::TextButton::buttonColourId, active ? accent : (assigned ? accent.withAlpha(0.28f) : PanelAlt));
+    button.setColour(juce::TextButton::buttonOnColourId, accent);
+    button.setColour(juce::TextButton::textColourOffId, active ? Background : Text);
     button.setColour(juce::TextButton::textColourOnId, Background);
 }
 
@@ -357,6 +373,258 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> maximumAttachment_;
 };
 
+class GalahadMidiToolsEditor::SurfaceRow final : public juce::Component
+{
+public:
+    SurfaceRow(GalahadMidiToolsEditor& owner, GalahadMidiToolsProcessor& processor, int control)
+        : owner_(owner),
+          processor_(processor),
+          control_(control)
+    {
+        controlLabel_.setText(galahad::plugin::controllerSurfaceControlName(control), juce::dontSendNotification);
+        controlLabel_.setJustificationType(juce::Justification::centredLeft);
+        controlLabel_.setColour(juce::Label::textColourId, Text);
+        addAndMakeVisible(controlLabel_);
+
+        for (int layer = 0; layer < static_cast<int>(layerButtons_.size()); ++layer)
+        {
+            auto& button = layerButtons_[static_cast<size_t>(layer)];
+            button.setButtonText(juce::String(layer + 1));
+            configurePanelButton(button, PinkRed);
+            button.onClick = [this, layer] {
+                owner_.selectedLayer_ = layer;
+                owner_.selectedSurfaceControl_ = control_;
+                setChoiceParameter(processor_.parameters(), galahad::plugin::ControllerLayerId, layer);
+                setChoiceParameter(processor_.parameters(), galahad::plugin::SurfaceEditLayerId, layer);
+                selectForDetail();
+                owner_.refreshSurfaceRows();
+                owner_.updateSetupState();
+            };
+            addAndMakeVisible(button);
+        }
+
+        mapButton_.setButtonText("Map");
+        configurePanelButton(mapButton_, Good);
+        mapButton_.onClick = [this] {
+            auto snapshot = currentSnapshot();
+            snapshot.enabled = snapshot.enabled == 0 ? 1 : 0;
+            processor_.setSurfaceMapSnapshot(controller(), control_, layer(), pattern(), targetChannel(), snapshot);
+            selectForDetail();
+            refresh();
+            owner_.updateSurfaceSummary();
+        };
+        addAndMakeVisible(mapButton_);
+
+        learnButton_.setButtonText("Learn");
+        configurePanelButton(learnButton_, Accent);
+        learnButton_.onClick = [this] {
+            owner_.beginSurfaceLearn(control_);
+        };
+        addAndMakeVisible(learnButton_);
+
+        inputChannel_.addItemList(galahad::plugin::inputChannelChoices(), 1);
+        outputChannel_.addItemList(galahad::plugin::outputChannelChoices(), 1);
+        configureCombo(inputChannel_);
+        configureCombo(outputChannel_);
+        addAndMakeVisible(inputChannel_);
+        addAndMakeVisible(outputChannel_);
+
+        configureSlider(inputCc_);
+        configureSlider(outputCc_);
+        configureSlider(minimum_);
+        configureSlider(maximum_);
+        addAndMakeVisible(inputCc_);
+        addAndMakeVisible(outputCc_);
+        addAndMakeVisible(minimum_);
+        addAndMakeVisible(maximum_);
+
+        inputChannel_.onChange = [this] {
+            if (refreshing_)
+                return;
+            auto snapshot = currentSnapshot();
+            snapshot.inputChannel = juce::jlimit(0, 16, inputChannel_.getSelectedId() - 1);
+            snapshot.inputSet = 1;
+            writeSnapshot(snapshot);
+        };
+        inputCc_.onValueChange = [this] {
+            if (refreshing_)
+                return;
+            auto snapshot = currentSnapshot();
+            snapshot.inputCc = juce::jlimit(0, 127, static_cast<int>(std::lround(inputCc_.getValue())));
+            snapshot.inputSet = 1;
+            writeSnapshot(snapshot);
+        };
+        outputChannel_.onChange = [this] {
+            if (refreshing_)
+                return;
+            auto snapshot = currentSnapshot();
+            snapshot.outputChannel = juce::jlimit(0, 15, outputChannel_.getSelectedId() - 1);
+            writeSnapshot(snapshot);
+        };
+        outputCc_.onValueChange = [this] {
+            if (refreshing_)
+                return;
+            auto snapshot = currentSnapshot();
+            snapshot.outputCc = juce::jlimit(0, 127, static_cast<int>(std::lround(outputCc_.getValue())));
+            writeSnapshot(snapshot);
+        };
+        minimum_.onValueChange = [this] {
+            if (refreshing_)
+                return;
+            auto snapshot = currentSnapshot();
+            snapshot.minimum = juce::jlimit(0, 127, static_cast<int>(std::lround(minimum_.getValue())));
+            writeSnapshot(snapshot);
+        };
+        maximum_.onValueChange = [this] {
+            if (refreshing_)
+                return;
+            auto snapshot = currentSnapshot();
+            snapshot.maximum = juce::jlimit(0, 127, static_cast<int>(std::lround(maximum_.getValue())));
+            writeSnapshot(snapshot);
+        };
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(10, 8);
+        controlLabel_.setBounds(takeColumn(area, SurfaceControlWidth));
+
+        auto layers = takeColumn(area, SurfaceLayersWidth);
+        for (auto& button : layerButtons_)
+            button.setBounds(layers.removeFromLeft(28).reduced(2, 4));
+
+        mapButton_.setBounds(takeColumn(area, SurfaceMapWidth).reduced(0, 4));
+        learnButton_.setBounds(takeColumn(area, SurfaceLearnWidth).reduced(0, 4));
+        inputChannel_.setBounds(takeColumn(area, SurfaceChannelWidth).reduced(0, 4));
+        inputCc_.setBounds(takeColumn(area, SurfaceCcWidth).reduced(0, 4));
+        outputChannel_.setBounds(takeColumn(area, SurfaceChannelWidth).reduced(0, 4));
+        outputCc_.setBounds(takeColumn(area, SurfaceCcWidth).reduced(0, 4));
+        minimum_.setBounds(takeColumn(area, SurfaceRangeWidth).reduced(0, 4));
+        maximum_.setBounds(takeColumn(area, SurfaceRangeWidth).reduced(0, 4));
+    }
+
+    void paint(juce::Graphics& graphics) override
+    {
+        const bool selected = owner_.selectedSurfaceControl_ == control_;
+        auto bounds = getLocalBounds().toFloat().reduced(0.0f, 2.0f);
+        graphics.setColour(control_ % 2 == 0 ? Panel : PanelAlt);
+        graphics.fillRoundedRectangle(bounds, 6.0f);
+        graphics.setColour(isLearning_ ? Accent : (selected ? AccentTwo : Border));
+        graphics.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, selected || isLearning_ ? 2.0f : 1.0f);
+    }
+
+    void refresh()
+    {
+        refreshing_ = true;
+
+        const auto active = currentSnapshot();
+        controlLabel_.setColour(juce::Label::textColourId, active.hasAnyAssignment() ? Text : MutedText);
+        for (int layerIndex = 0; layerIndex < static_cast<int>(layerButtons_.size()); ++layerIndex)
+        {
+            const auto layerSnapshot = processor_.surfaceMapSnapshot(controller(), control_, layerIndex, pattern(), targetChannel());
+            const bool selected = layerIndex == layer();
+            auto& button = layerButtons_[static_cast<size_t>(layerIndex)];
+            button.setToggleState(selected, juce::dontSendNotification);
+            setStatusButtonColours(button, selected, layerSnapshot.hasAnyAssignment(), selected ? PinkRed : AccentTwo);
+        }
+
+        mapButton_.setToggleState(active.enabled != 0, juce::dontSendNotification);
+        setStatusButtonColours(mapButton_, active.enabled != 0, active.hasMapAssignment(), Good);
+        setStatusButtonColours(learnButton_, isLearning_, active.hasInputAssignment(), Accent);
+        learnButton_.setButtonText(isLearning_ ? "Listening" : "Learn");
+
+        inputChannel_.setSelectedId(juce::jlimit(1, 17, active.inputChannel + 1), juce::dontSendNotification);
+        inputCc_.setValue(active.inputCc, juce::dontSendNotification);
+        outputChannel_.setSelectedId(juce::jlimit(1, 16, active.outputChannel + 1), juce::dontSendNotification);
+        outputCc_.setValue(active.outputCc, juce::dontSendNotification);
+        minimum_.setValue(active.minimum, juce::dontSendNotification);
+        maximum_.setValue(active.maximum, juce::dontSendNotification);
+
+        refreshing_ = false;
+        repaint();
+    }
+
+    void setLearning(bool shouldLearn)
+    {
+        isLearning_ = shouldLearn;
+        refresh();
+    }
+
+    void learnFrom(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot)
+    {
+        processor_.learnSurfaceMap(controller(), control_, layer(), pattern(), targetChannel(), snapshot);
+        owner_.selectedSurfaceControl_ = control_;
+        selectForDetail();
+        refresh();
+    }
+
+private:
+    int controller() const noexcept { return owner_.selectedControllerSlot_; }
+    int layer() const noexcept { return owner_.selectedLayer_; }
+    int pattern() const noexcept { return owner_.selectedAutomationSlot_; }
+    int targetChannel() const noexcept { return juce::jlimit(0, galahad::plugin::ControllerTargetChannelCount - 1, owner_.selectedTargetChannel_ - 1); }
+
+    GalahadMidiToolsProcessor::SurfaceMapSnapshot currentSnapshot() const noexcept
+    {
+        return processor_.surfaceMapSnapshot(controller(), control_, layer(), pattern(), targetChannel());
+    }
+
+    void writeSnapshot(const GalahadMidiToolsProcessor::SurfaceMapSnapshot& snapshot)
+    {
+        processor_.setSurfaceMapSnapshot(controller(), control_, layer(), pattern(), targetChannel(), snapshot);
+        owner_.selectedSurfaceControl_ = control_;
+        selectForDetail();
+        refresh();
+        owner_.updateSurfaceSummary();
+    }
+
+    void selectForDetail()
+    {
+        setChoiceParameter(processor_.parameters(), galahad::plugin::SurfaceEditControllerId, controller());
+        setChoiceParameter(processor_.parameters(), galahad::plugin::SurfaceEditControlId, control_);
+        setChoiceParameter(processor_.parameters(), galahad::plugin::SurfaceEditLayerId, layer());
+        processor_.loadSurfaceEditorFromMap(controller(), control_, layer(), pattern(), targetChannel());
+    }
+
+    GalahadMidiToolsEditor& owner_;
+    GalahadMidiToolsProcessor& processor_;
+    int control_{ 0 };
+    juce::Label controlLabel_;
+    std::array<juce::TextButton, galahad::plugin::ControllerLayerCount> layerButtons_;
+    juce::TextButton mapButton_;
+    juce::TextButton learnButton_;
+    juce::ComboBox inputChannel_;
+    juce::Slider inputCc_;
+    juce::ComboBox outputChannel_;
+    juce::Slider outputCc_;
+    juce::Slider minimum_;
+    juce::Slider maximum_;
+    bool refreshing_{ false };
+    bool isLearning_{ false };
+};
+
+class GalahadMidiToolsEditor::SurfaceRowsContent final : public juce::Component
+{
+public:
+    explicit SurfaceRowsContent(GalahadMidiToolsEditor& owner)
+        : owner_(owner)
+    {
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds();
+        for (auto& row : owner_.surfaceRows_)
+        {
+            if (row != nullptr)
+                row->setBounds(area.removeFromTop(SurfaceRowHeight));
+        }
+    }
+
+private:
+    GalahadMidiToolsEditor& owner_;
+};
+
 GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioProcessor)
     : juce::AudioProcessorEditor(audioProcessor),
       processor_(audioProcessor)
@@ -481,6 +749,27 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
     addAndMakeVisible(surfaceOutputCc_);
     addAndMakeVisible(surfaceMinimum_);
     addAndMakeVisible(surfaceMaximum_);
+    surfaceController_.setVisible(false);
+    surfaceControl_.setVisible(false);
+    surfaceMap_.setVisible(false);
+    surfaceEnabled_.setVisible(false);
+    surfaceInputChannel_.setVisible(false);
+    surfaceInputCc_.setVisible(false);
+    surfaceOutputChannel_.setVisible(false);
+    surfaceOutputCc_.setVisible(false);
+    surfaceMinimum_.setVisible(false);
+    surfaceMaximum_.setVisible(false);
+
+    surfaceRowsContent_ = std::make_unique<SurfaceRowsContent>(*this);
+    surfaceViewport_.setScrollBarsShown(true, false);
+    surfaceViewport_.setViewedComponent(surfaceRowsContent_.get(), false);
+    surfaceViewport_.setColour(juce::Viewport::backgroundColourId, Background);
+    addAndMakeVisible(surfaceViewport_);
+    for (int control = 0; control < static_cast<int>(surfaceRows_.size()); ++control)
+    {
+        surfaceRows_[static_cast<size_t>(control)] = std::make_unique<SurfaceRow>(*this, processor_, control);
+        surfaceRowsContent_->addAndMakeVisible(*surfaceRows_[static_cast<size_t>(control)]);
+    }
 
     hardwareCaptureButton_.setButtonText("Hardware");
     hardwareCaptureButton_.setColour(juce::ToggleButton::textColourId, Text);

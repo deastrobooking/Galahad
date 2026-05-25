@@ -21,11 +21,16 @@ private:
     class ActivityView;
     class CircleButton;
     class MapRow;
+    class SurfaceRowsContent;
+    class SurfaceRow;
 
     void timerCallback() override;
     void beginLearn(int slot);
+    void beginSurfaceLearn(int control);
     void finishLearn(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot);
+    void finishSurfaceLearn(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot);
     void refreshLearningState();
+    void refreshSurfaceRows();
     void updateHardwareStatus();
     void updateSetupState();
     void updateSurfaceSummary();
@@ -56,6 +61,9 @@ private:
     juce::Slider surfaceOutputCc_;
     juce::Slider surfaceMinimum_;
     juce::Slider surfaceMaximum_;
+    juce::Viewport surfaceViewport_;
+    std::unique_ptr<SurfaceRowsContent> surfaceRowsContent_;
+    std::array<std::unique_ptr<SurfaceRow>, galahad::plugin::ControllerSurfaceControlCount> surfaceRows_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> hardwareCaptureAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> thruAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> surfaceControllerAttachment_;
@@ -71,7 +79,9 @@ private:
     std::unique_ptr<ActivityView> activityView_;
     std::array<std::unique_ptr<MapRow>, galahad::plugin::ControllerMapSlotCount> rows_;
     int learningSlot_{ -1 };
+    int surfaceLearningControl_{ -1 };
     int learnStartSerial_{ 0 };
+    int surfaceLearnStartSerial_{ 0 };
     int lastInputSerial_{ 0 };
     int lastOutputSerial_{ 0 };
     int lastHardwareInputCount_{ -1 };
@@ -79,6 +89,7 @@ private:
     int selectedLayer_{ 0 };
     int selectedTargetChannel_{ 1 };
     int selectedAutomationSlot_{ 0 };
+    int selectedSurfaceControl_{ 0 };
     int lastSurfaceController_{ -1 };
     int lastSurfaceControl_{ -1 };
     int lastSurfaceMap_{ -1 };
