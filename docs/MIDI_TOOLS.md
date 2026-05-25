@@ -195,10 +195,18 @@ The mapper model supports up to 8 captured controller inputs. Each controller
 slot has 8 fader-style controls and 15 button-style controls. Every one of
 those 23 controls has four layer mappings named `Map 1` through `Map 4`.
 
-`Controller Layer` selects which surface layer is active. The editor's A-D layer
-buttons update that parameter. Surface mappings are evaluated only for the
-hardware input slot that produced the MIDI event, so two controllers can use the
-same CC numbers without colliding once Galahad has opened them directly.
+`Controller Layer`, `Controller Pattern`, and `Controller Target Channel` select
+the active surface context. The editor's A-D layer buttons, C1-C4 clip circles,
+and 1-16 channel circles update those parameters. Surface mappings are evaluated
+only for the hardware input slot that produced the MIDI event, so two controllers
+can use the same CC numbers without colliding once Galahad has opened them
+directly.
+
+Surface assignments are saved per controller, pattern, target channel, control,
+and map layer. After a mapped control has produced a CC value, that last value is
+saved with the assignment and recalled when the active pattern/channel/layer
+changes. That keeps four knob or fader positions separate across patterns and
+channel-focused pages instead of sharing one master mapping state.
 
 Ableton does not need to expose every stored mapping as a separate automatable
 parameter. Instead, use the compact focused editor parameters:
@@ -207,9 +215,13 @@ parameter. Instead, use the compact focused editor parameters:
 Surface Edit Controller = controller slot 1..8
 Surface Edit Control    = Fader 1..8 or Button 1..15
 Surface Edit Map        = Map 1..4 for that control
+Controller Pattern      = clip context C1..C4
+Controller Target Ch    = focused channel 1..16
 ```
 
-Changing the fields below writes them into the selected controller/control/map
+The plugin GUI shows the same focused assignment panel, including a summary like
+`C1 Fader 1 P1 Ch 1 Map 1: On Omni CC 7 -> Ch 1 CC 74 0..127`. Changing the
+fields below writes them into the selected controller/control/pattern/channel/map
 entry:
 
 ```text

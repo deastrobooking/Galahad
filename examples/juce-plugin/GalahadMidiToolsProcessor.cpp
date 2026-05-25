@@ -177,6 +177,8 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     std::array<galahad::MidiEvent, MaxBlockEvents> incoming{};
     std::array<galahad::MidiEvent, MaxBlockEvents> mapped{};
     std::array<galahad::MidiEvent, MaxBlockEvents> processed{};
+    size_t incomingCount = 0;
+    size_t mappedCount = 0;
 
     double bpm = 120.0;
     if (auto* playHead = getPlayHead())
@@ -189,8 +191,17 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     }
     updateEngineConfig(bpm);
 
-    size_t incomingCount = 0;
-    size_t mappedCount = 0;
+    const auto surfaceContext = currentSurfacePerformanceContext();
+    const bool shouldRecallSurface = ! hasSurfacePerformanceContext_
+        || (hasSurfacePerformanceContext_
+        && (surfaceContext.layer != lastSurfacePerformanceContext_.layer
+            || surfaceContext.pattern != lastSurfacePerformanceContext_.pattern
+            || surfaceContext.targetChannel != lastSurfacePerformanceContext_.targetChannel));
+    if (shouldRecallSurface)
+        appendSurfaceRecallEvents(surfaceContext, std::span<galahad::MidiEvent>(mapped.data(), mapped.size()), mappedCount);
+    lastSurfacePerformanceContext_ = surfaceContext;
+    hasSurfacePerformanceContext_ = true;
+
     auto ingestMessage = [this, &incoming, &incomingCount, &mapped, &mappedCount](const juce::MidiMessage& message,
                                                                                   int samplePosition,
                                                                                   int sourceControllerSlot) {
@@ -389,6 +400,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout GalahadMidiToolsProcessor::c
         juce::ParameterID(galahad::plugin::ControllerLayerId, 1),
         "Controller Layer",
         galahad::plugin::controllerLayerChoices(),
+        0));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(galahad::plugin::ControllerPatternId, 1),
+        "Controller Pattern",
+        galahad::plugin::controllerPatternChoices(),
+        0));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(galahad::plugin::ControllerTargetChannelId, 1),
+        "Controller Target Channel",
+        galahad::plugin::controllerTargetChannelChoices(),
         0));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(galahad::plugin::SurfaceEditControllerId, 1),
@@ -623,20 +644,28 @@ void GalahadMidiToolsProcessor::initializeControllerSurfaceMaps() noexcept
 {
     for (int controller = 0; controller < ControllerSlotCount; ++controller)
     {
-        for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+        for (int pattern = 0; pattern < ControllerPatternCount; ++pattern)
         {
-            for (int layer = 0; layer < ControllerLayerCount; ++layer)
+            for (int targetChannel = 0; targetChannel < ControllerTargetChannelCount; ++targetChannel)
             {
-                const int index = galahad::plugin::controllerSurfaceMapIndex(controller, control, layer);
-                auto& map = controllerSurfaceMaps_[static_cast<size_t>(index)];
-                const int defaultCc = juce::jlimit(0, 127, control);
-                map.enabled.store(0, std::memory_order_relaxed);
-                map.inputChannel.store(0, std::memory_order_relaxed);
-                map.inputCc.store(defaultCc, std::memory_order_relaxed);
-                map.outputChannel.store(controller % 16, std::memory_order_relaxed);
-                map.outputCc.store(defaultCc, std::memory_order_relaxed);
-                map.minimum.store(0, std::memory_order_relaxed);
-                map.maximum.store(127, std::memory_order_relaxed);
+                for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+                {
+                    for (int layer = 0; layer < ControllerLayerCount; ++layer)
+                    {
+                        const int index = galahad::plugin::controllerSurfaceMapIndex(controller, pattern, targetChannel, control, layer);
+                        auto& map = controllerSurfaceMaps_[static_cast<size_t>(index)];
+                        const int defaultCc = juce::jlimit(0, 127, control);
+                        map.enabled.store(0, std::memory_order_relaxed);
+                        map.inputChannel.store(0, std::memory_order_relaxed);
+                        map.inputCc.store(defaultCc, std::memory_order_relaxed);
+                        map.outputChannel.store(targetChannel, std::memory_order_relaxed);
+                        map.outputCc.store(defaultCc, std::memory_order_relaxed);
+                        map.minimum.store(0, std::memory_order_relaxed);
+                        map.maximum.store(127, std::memory_order_relaxed);
+                        map.value.store(0, std::memory_order_relaxed);
+                        map.valueSet.store(0, std::memory_order_relaxed);
+                    }
+                }
             }
         }
     }
@@ -650,6 +679,12 @@ void GalahadMidiToolsProcessor::syncSurfaceEditorToSelectedMap() noexcept
         juce::jlimit(0, ControllerSlotCount - 1, parameterIntValue(surfaceEditorParameters_.controller, 0)),
         juce::jlimit(0, ControllerSurfaceControlCount - 1, parameterIntValue(surfaceEditorParameters_.control, 0)),
         juce::jlimit(0, ControllerLayerCount - 1, parameterIntValue(surfaceEditorParameters_.layer, 0)),
+        juce::jlimit(0,
+                     ControllerPatternCount - 1,
+                     static_cast<int>(std::lround(valueOf(parameters_, galahad::plugin::ControllerPatternId)))),
+        juce::jlimit(0,
+                     ControllerTargetChannelCount - 1,
+                     static_cast<int>(std::lround(valueOf(parameters_, galahad::plugin::ControllerTargetChannelId)))),
         parameterBoolValue(surfaceEditorParameters_.enabled, false) ? 1 : 0,
         juce::jlimit(0, 16, parameterIntValue(surfaceEditorParameters_.inputChannel, 0)),
         juce::jlimit(0, 127, parameterIntValue(surfaceEditorParameters_.inputCc, 0)),
@@ -658,6 +693,13 @@ void GalahadMidiToolsProcessor::syncSurfaceEditorToSelectedMap() noexcept
         juce::jlimit(0, 127, parameterIntValue(surfaceEditorParameters_.minimum, 0)),
         juce::jlimit(0, 127, parameterIntValue(surfaceEditorParameters_.maximum, 127)),
     };
+
+    const bool selectionChanged = hasSurfaceEditorSnapshot_
+        && (current.controller != lastSurfaceEditorSnapshot_.controller
+            || current.control != lastSurfaceEditorSnapshot_.control
+            || current.layer != lastSurfaceEditorSnapshot_.layer
+            || current.pattern != lastSurfaceEditorSnapshot_.pattern
+            || current.targetChannel != lastSurfaceEditorSnapshot_.targetChannel);
 
     const bool editChanged = hasSurfaceEditorSnapshot_
         && (current.enabled != lastSurfaceEditorSnapshot_.enabled
@@ -670,7 +712,16 @@ void GalahadMidiToolsProcessor::syncSurfaceEditorToSelectedMap() noexcept
 
     if (editChanged)
     {
-        const int index = galahad::plugin::controllerSurfaceMapIndex(current.controller, current.control, current.layer);
+        const int targetController = selectionChanged ? lastSurfaceEditorSnapshot_.controller : current.controller;
+        const int targetControl = selectionChanged ? lastSurfaceEditorSnapshot_.control : current.control;
+        const int targetLayer = selectionChanged ? lastSurfaceEditorSnapshot_.layer : current.layer;
+        const int targetPattern = selectionChanged ? lastSurfaceEditorSnapshot_.pattern : current.pattern;
+        const int targetChannel = selectionChanged ? lastSurfaceEditorSnapshot_.targetChannel : current.targetChannel;
+        const int index = galahad::plugin::controllerSurfaceMapIndex(targetController,
+                                                                     targetPattern,
+                                                                     targetChannel,
+                                                                     targetControl,
+                                                                     targetLayer);
         auto& map = controllerSurfaceMaps_[static_cast<size_t>(index)];
         map.enabled.store(current.enabled, std::memory_order_relaxed);
         map.inputChannel.store(current.inputChannel, std::memory_order_relaxed);
@@ -685,49 +736,167 @@ void GalahadMidiToolsProcessor::syncSurfaceEditorToSelectedMap() noexcept
     hasSurfaceEditorSnapshot_ = true;
 }
 
+void GalahadMidiToolsProcessor::syncAndLoadSurfaceEditorSelection()
+{
+    syncSurfaceEditorToSelectedMap();
+
+    const int controller = juce::jlimit(0, ControllerSlotCount - 1, parameterIntValue(surfaceEditorParameters_.controller, 0));
+    const int control = juce::jlimit(0, ControllerSurfaceControlCount - 1, parameterIntValue(surfaceEditorParameters_.control, 0));
+    const int layer = juce::jlimit(0, ControllerLayerCount - 1, parameterIntValue(surfaceEditorParameters_.layer, 0));
+    const int pattern = juce::jlimit(0,
+                                    ControllerPatternCount - 1,
+                                    static_cast<int>(std::lround(valueOf(parameters_, galahad::plugin::ControllerPatternId))));
+    const int targetChannel = juce::jlimit(0,
+                                          ControllerTargetChannelCount - 1,
+                                          static_cast<int>(std::lround(valueOf(parameters_, galahad::plugin::ControllerTargetChannelId))));
+    loadSurfaceEditorFromMap(controller, control, layer, pattern, targetChannel);
+}
+
+void GalahadMidiToolsProcessor::loadSurfaceEditorFromMap(int controller, int control, int layer, int pattern, int targetChannel)
+{
+    controller = juce::jlimit(0, ControllerSlotCount - 1, controller);
+    control = juce::jlimit(0, ControllerSurfaceControlCount - 1, control);
+    layer = juce::jlimit(0, ControllerLayerCount - 1, layer);
+    pattern = juce::jlimit(0, ControllerPatternCount - 1, pattern);
+    targetChannel = juce::jlimit(0, ControllerTargetChannelCount - 1, targetChannel);
+
+    const int index = galahad::plugin::controllerSurfaceMapIndex(controller, pattern, targetChannel, control, layer);
+    const auto& map = controllerSurfaceMaps_[static_cast<size_t>(index)];
+    const SurfaceEditorSnapshot loaded{
+        controller,
+        control,
+        layer,
+        pattern,
+        targetChannel,
+        map.enabled.load(std::memory_order_relaxed),
+        map.inputChannel.load(std::memory_order_relaxed),
+        map.inputCc.load(std::memory_order_relaxed),
+        map.outputChannel.load(std::memory_order_relaxed),
+        map.outputCc.load(std::memory_order_relaxed),
+        map.minimum.load(std::memory_order_relaxed),
+        map.maximum.load(std::memory_order_relaxed),
+    };
+
+    setSurfaceEditorParameter(galahad::plugin::SurfaceEditEnabledId, static_cast<float>(loaded.enabled));
+    setSurfaceEditorParameter(galahad::plugin::SurfaceEditInputChannelId, static_cast<float>(loaded.inputChannel));
+    setSurfaceEditorParameter(galahad::plugin::SurfaceEditInputCcId, static_cast<float>(loaded.inputCc));
+    setSurfaceEditorParameter(galahad::plugin::SurfaceEditOutputChannelId, static_cast<float>(loaded.outputChannel));
+    setSurfaceEditorParameter(galahad::plugin::SurfaceEditOutputCcId, static_cast<float>(loaded.outputCc));
+    setSurfaceEditorParameter(galahad::plugin::SurfaceEditMinimumId, static_cast<float>(loaded.minimum));
+    setSurfaceEditorParameter(galahad::plugin::SurfaceEditMaximumId, static_cast<float>(loaded.maximum));
+
+    lastSurfaceEditorSnapshot_ = loaded;
+    hasSurfaceEditorSnapshot_ = true;
+}
+
+void GalahadMidiToolsProcessor::setSurfaceEditorParameter(const char* id, float value)
+{
+    if (auto* parameter = parameters_.getParameter(id))
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+}
+
+GalahadMidiToolsProcessor::SurfacePerformanceContext GalahadMidiToolsProcessor::currentSurfacePerformanceContext() const noexcept
+{
+    return SurfacePerformanceContext{
+        juce::jlimit(0,
+                     ControllerLayerCount - 1,
+                     static_cast<int>(std::lround(valueOf(parameters_, galahad::plugin::ControllerLayerId)))),
+        juce::jlimit(0,
+                     ControllerPatternCount - 1,
+                     static_cast<int>(std::lround(valueOf(parameters_, galahad::plugin::ControllerPatternId)))),
+        juce::jlimit(0,
+                     ControllerTargetChannelCount - 1,
+                     static_cast<int>(std::lround(valueOf(parameters_, galahad::plugin::ControllerTargetChannelId)))),
+    };
+}
+
+void GalahadMidiToolsProcessor::appendSurfaceRecallEvents(const SurfacePerformanceContext& context,
+                                                          std::span<galahad::MidiEvent> output,
+                                                          size_t& outputCount) noexcept
+{
+    for (int controller = 0; controller < ControllerSlotCount; ++controller)
+    {
+        for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+        {
+            const int index = galahad::plugin::controllerSurfaceMapIndex(controller,
+                                                                         context.pattern,
+                                                                         context.targetChannel,
+                                                                         control,
+                                                                         context.layer);
+            const auto& map = controllerSurfaceMaps_[static_cast<size_t>(index)];
+            if (map.enabled.load(std::memory_order_relaxed) == 0
+                || map.valueSet.load(std::memory_order_relaxed) == 0
+                || outputCount >= output.size())
+                continue;
+
+            const uint8_t outputChannel = static_cast<uint8_t>(juce::jlimit(0, 15, map.outputChannel.load(std::memory_order_relaxed)) + 1);
+            const uint8_t outputCc = static_cast<uint8_t>(juce::jlimit(0, 127, map.outputCc.load(std::memory_order_relaxed)));
+            const uint8_t value = static_cast<uint8_t>(juce::jlimit(0, 127, map.value.load(std::memory_order_relaxed)));
+            const auto event = galahad::MidiEvent{ galahad::MidiEventType::ControlChange, outputChannel, outputCc, value, 0 };
+
+            output[outputCount++] = event;
+            recordControllerOutput(event, context.layer);
+        }
+    }
+}
+
 juce::ValueTree GalahadMidiToolsProcessor::createControllerSurfaceMapsState() const
 {
     juce::ValueTree state{ SurfaceMapsStateId };
 
     for (int controller = 0; controller < ControllerSlotCount; ++controller)
     {
-        for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+        for (int pattern = 0; pattern < ControllerPatternCount; ++pattern)
         {
-            for (int layer = 0; layer < ControllerLayerCount; ++layer)
+            for (int targetChannel = 0; targetChannel < ControllerTargetChannelCount; ++targetChannel)
             {
-                const int index = galahad::plugin::controllerSurfaceMapIndex(controller, control, layer);
-                const auto& map = controllerSurfaceMaps_[static_cast<size_t>(index)];
-                const int defaultCc = juce::jlimit(0, 127, control);
-                const int enabled = map.enabled.load(std::memory_order_relaxed);
-                const int inputChannel = map.inputChannel.load(std::memory_order_relaxed);
-                const int inputCc = map.inputCc.load(std::memory_order_relaxed);
-                const int outputChannel = map.outputChannel.load(std::memory_order_relaxed);
-                const int outputCc = map.outputCc.load(std::memory_order_relaxed);
-                const int minimum = map.minimum.load(std::memory_order_relaxed);
-                const int maximum = map.maximum.load(std::memory_order_relaxed);
+                for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+                {
+                    for (int layer = 0; layer < ControllerLayerCount; ++layer)
+                    {
+                        const int index = galahad::plugin::controllerSurfaceMapIndex(controller, pattern, targetChannel, control, layer);
+                        const auto& map = controllerSurfaceMaps_[static_cast<size_t>(index)];
+                        const int defaultCc = juce::jlimit(0, 127, control);
+                        const int enabled = map.enabled.load(std::memory_order_relaxed);
+                        const int inputChannel = map.inputChannel.load(std::memory_order_relaxed);
+                        const int inputCc = map.inputCc.load(std::memory_order_relaxed);
+                        const int outputChannel = map.outputChannel.load(std::memory_order_relaxed);
+                        const int outputCc = map.outputCc.load(std::memory_order_relaxed);
+                        const int minimum = map.minimum.load(std::memory_order_relaxed);
+                        const int maximum = map.maximum.load(std::memory_order_relaxed);
+                        const int value = map.value.load(std::memory_order_relaxed);
+                        const int valueSet = map.valueSet.load(std::memory_order_relaxed);
 
-                const bool isDefault = enabled == 0
-                    && inputChannel == 0
-                    && inputCc == defaultCc
-                    && outputChannel == controller % 16
-                    && outputCc == defaultCc
-                    && minimum == 0
-                    && maximum == 127;
-                if (isDefault)
-                    continue;
+                        const bool isDefault = enabled == 0
+                            && inputChannel == 0
+                            && inputCc == defaultCc
+                            && outputChannel == targetChannel
+                            && outputCc == defaultCc
+                            && minimum == 0
+                            && maximum == 127
+                            && value == 0
+                            && valueSet == 0;
+                        if (isDefault)
+                            continue;
 
-                juce::ValueTree child{ SurfaceMapStateId };
-                child.setProperty("controller", controller, nullptr);
-                child.setProperty("control", control, nullptr);
-                child.setProperty("layer", layer, nullptr);
-                child.setProperty("enabled", enabled, nullptr);
-                child.setProperty("inputChannel", inputChannel, nullptr);
-                child.setProperty("inputCc", inputCc, nullptr);
-                child.setProperty("outputChannel", outputChannel, nullptr);
-                child.setProperty("outputCc", outputCc, nullptr);
-                child.setProperty("minimum", minimum, nullptr);
-                child.setProperty("maximum", maximum, nullptr);
-                state.addChild(child, -1, nullptr);
+                        juce::ValueTree child{ SurfaceMapStateId };
+                        child.setProperty("controller", controller, nullptr);
+                        child.setProperty("pattern", pattern, nullptr);
+                        child.setProperty("targetChannel", targetChannel, nullptr);
+                        child.setProperty("control", control, nullptr);
+                        child.setProperty("layer", layer, nullptr);
+                        child.setProperty("enabled", enabled, nullptr);
+                        child.setProperty("inputChannel", inputChannel, nullptr);
+                        child.setProperty("inputCc", inputCc, nullptr);
+                        child.setProperty("outputChannel", outputChannel, nullptr);
+                        child.setProperty("outputCc", outputCc, nullptr);
+                        child.setProperty("minimum", minimum, nullptr);
+                        child.setProperty("maximum", maximum, nullptr);
+                        child.setProperty("value", value, nullptr);
+                        child.setProperty("valueSet", valueSet, nullptr);
+                        state.addChild(child, -1, nullptr);
+                    }
+                }
             }
         }
     }
@@ -748,18 +917,28 @@ void GalahadMidiToolsProcessor::restoreControllerSurfaceMapsState(const juce::Va
             continue;
 
         const int controller = juce::jlimit(0, ControllerSlotCount - 1, static_cast<int>(child.getProperty("controller", 0)));
+        const int pattern = juce::jlimit(0, ControllerPatternCount - 1, static_cast<int>(child.getProperty("pattern", 0)));
+        const int targetChannel = juce::jlimit(0,
+                                              ControllerTargetChannelCount - 1,
+                                              static_cast<int>(child.getProperty("targetChannel", 0)));
         const int control = juce::jlimit(0, ControllerSurfaceControlCount - 1, static_cast<int>(child.getProperty("control", 0)));
         const int layer = juce::jlimit(0, ControllerLayerCount - 1, static_cast<int>(child.getProperty("layer", 0)));
-        const int index = galahad::plugin::controllerSurfaceMapIndex(controller, control, layer);
+        const int index = galahad::plugin::controllerSurfaceMapIndex(controller, pattern, targetChannel, control, layer);
         auto& map = controllerSurfaceMaps_[static_cast<size_t>(index)];
 
         map.enabled.store(juce::jlimit(0, 1, static_cast<int>(child.getProperty("enabled", 0))), std::memory_order_relaxed);
         map.inputChannel.store(juce::jlimit(0, 16, static_cast<int>(child.getProperty("inputChannel", 0))), std::memory_order_relaxed);
         map.inputCc.store(juce::jlimit(0, 127, static_cast<int>(child.getProperty("inputCc", control))), std::memory_order_relaxed);
-        map.outputChannel.store(juce::jlimit(0, 15, static_cast<int>(child.getProperty("outputChannel", controller % 16))), std::memory_order_relaxed);
+        map.outputChannel.store(juce::jlimit(0, 15, static_cast<int>(child.getProperty("outputChannel", targetChannel))), std::memory_order_relaxed);
         map.outputCc.store(juce::jlimit(0, 127, static_cast<int>(child.getProperty("outputCc", control))), std::memory_order_relaxed);
         map.minimum.store(juce::jlimit(0, 127, static_cast<int>(child.getProperty("minimum", 0))), std::memory_order_relaxed);
         map.maximum.store(juce::jlimit(0, 127, static_cast<int>(child.getProperty("maximum", 127))), std::memory_order_relaxed);
+        map.value.store(juce::jlimit(0, 127, static_cast<int>(child.getProperty("value", 0))), std::memory_order_relaxed);
+        map.valueSet.store(juce::jlimit(0,
+                                        1,
+                                        static_cast<int>(child.getProperty("valueSet",
+                                                                           child.hasProperty("value") ? 1 : 0))),
+                           std::memory_order_relaxed);
     }
 }
 
@@ -802,7 +981,7 @@ bool GalahadMidiToolsProcessor::appendControllerMappings(const galahad::MidiEven
         return true;
     };
 
-    auto appendSurfaceMap = [this, &event, output, &outputCount](const ControllerSurfaceMap& map, int telemetrySlot) mutable {
+    auto appendSurfaceMap = [this, &event, output, &outputCount](ControllerSurfaceMap& map, int telemetrySlot) mutable {
         if (map.enabled.load(std::memory_order_relaxed) == 0)
             return false;
 
@@ -830,6 +1009,8 @@ bool GalahadMidiToolsProcessor::appendControllerMappings(const galahad::MidiEven
                                                 event.sampleOffset };
 
         output[outputCount++] = mapped;
+        map.value.store(mapped.data2, std::memory_order_relaxed);
+        map.valueSet.store(1, std::memory_order_relaxed);
         recordControllerOutput(mapped, telemetrySlot);
         return true;
     };
@@ -839,14 +1020,16 @@ bool GalahadMidiToolsProcessor::appendControllerMappings(const galahad::MidiEven
 
     if (sourceControllerSlot >= 0 && sourceControllerSlot < ControllerSlotCount)
     {
-        const int activeLayer = juce::jlimit(0,
-                                            ControllerLayerCount - 1,
-                                            static_cast<int>(std::lround(valueOf(parameters_, galahad::plugin::ControllerLayerId))));
+        const auto context = currentSurfacePerformanceContext();
 
         for (int control = 0; control < ControllerSurfaceControlCount; ++control)
         {
-            const int index = galahad::plugin::controllerSurfaceMapIndex(sourceControllerSlot, control, activeLayer);
-            matched = appendSurfaceMap(controllerSurfaceMaps_[static_cast<size_t>(index)], activeLayer) || matched;
+            const int index = galahad::plugin::controllerSurfaceMapIndex(sourceControllerSlot,
+                                                                         context.pattern,
+                                                                         context.targetChannel,
+                                                                         control,
+                                                                         context.layer);
+            matched = appendSurfaceMap(controllerSurfaceMaps_[static_cast<size_t>(index)], context.layer) || matched;
         }
     }
 

@@ -60,6 +60,7 @@ public:
     ControllerSnapshot lastControllerInput() const noexcept;
     ControllerSnapshot lastControllerOutput() const noexcept;
     juce::AudioProcessorValueTreeState& parameters() noexcept { return parameters_; }
+    void syncAndLoadSurfaceEditorSelection();
     void refreshHardwareMidiInputs();
     juce::StringArray activeHardwareInputNames() const;
     int activeHardwareInputCount() const noexcept { return activeHardwareInputCount_.load(std::memory_order_relaxed); }
@@ -69,6 +70,8 @@ private:
     static constexpr int ControllerMapSlotCount = galahad::plugin::ControllerMapSlotCount;
     static constexpr int ControllerSlotCount = galahad::plugin::ControllerSlotCount;
     static constexpr int ControllerLayerCount = galahad::plugin::ControllerLayerCount;
+    static constexpr int ControllerPatternCount = galahad::plugin::ControllerPatternCount;
+    static constexpr int ControllerTargetChannelCount = galahad::plugin::ControllerTargetChannelCount;
     static constexpr int ControllerSurfaceControlCount = galahad::plugin::ControllerSurfaceControlCount;
     static constexpr int ControllerSurfaceMapSlotCount = galahad::plugin::ControllerSurfaceMapSlotCount;
 
@@ -92,6 +95,8 @@ private:
         std::atomic<int> outputCc{ 0 };
         std::atomic<int> minimum{ 0 };
         std::atomic<int> maximum{ 127 };
+        std::atomic<int> value{ 0 };
+        std::atomic<int> valueSet{ 0 };
     };
 
     struct SurfaceEditorParameters
@@ -113,6 +118,8 @@ private:
         int controller{ 0 };
         int control{ 0 };
         int layer{ 0 };
+        int pattern{ 0 };
+        int targetChannel{ 0 };
         int enabled{ 0 };
         int inputChannel{ 0 };
         int inputCc{ 0 };
@@ -120,6 +127,13 @@ private:
         int outputCc{ 0 };
         int minimum{ 0 };
         int maximum{ 127 };
+    };
+
+    struct SurfacePerformanceContext
+    {
+        int layer{ 0 };
+        int pattern{ 0 };
+        int targetChannel{ 0 };
     };
 
     struct HardwareMidiInput
@@ -140,6 +154,12 @@ private:
     void cacheControllerMapParameters();
     void initializeControllerSurfaceMaps() noexcept;
     void syncSurfaceEditorToSelectedMap() noexcept;
+    void loadSurfaceEditorFromMap(int controller, int control, int layer, int pattern, int targetChannel);
+    void setSurfaceEditorParameter(const char* id, float value);
+    SurfacePerformanceContext currentSurfacePerformanceContext() const noexcept;
+    void appendSurfaceRecallEvents(const SurfacePerformanceContext& context,
+                                   std::span<galahad::MidiEvent> output,
+                                   size_t& outputCount) noexcept;
     juce::ValueTree createControllerSurfaceMapsState() const;
     void restoreControllerSurfaceMapsState(const juce::ValueTree& state);
     void closeHardwareMidiInputs();
@@ -159,6 +179,8 @@ private:
     SurfaceEditorParameters surfaceEditorParameters_{};
     SurfaceEditorSnapshot lastSurfaceEditorSnapshot_{};
     bool hasSurfaceEditorSnapshot_{ false };
+    SurfacePerformanceContext lastSurfacePerformanceContext_{};
+    bool hasSurfacePerformanceContext_{ false };
     std::array<ControllerSurfaceMap, ControllerSurfaceMapSlotCount> controllerSurfaceMaps_{};
     galahad::SpscQueue<galahad::midi::SessionCell, 256> launchedCells_;
     std::unique_ptr<juce::MidiOutput> virtualMidiOutput_;

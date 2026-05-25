@@ -7,14 +7,18 @@ namespace galahad::plugin
 inline constexpr int ControllerMapSlotCount = 4;
 inline constexpr int ControllerSlotCount = 8;
 inline constexpr int ControllerLayerCount = 4;
+inline constexpr int ControllerPatternCount = 4;
+inline constexpr int ControllerTargetChannelCount = 16;
 inline constexpr int ControllerFaderCount = 8;
 inline constexpr int ControllerButtonCount = 15;
 inline constexpr int ControllerSurfaceControlCount = ControllerFaderCount + ControllerButtonCount;
 inline constexpr int ControllerSurfaceMapSlotCount =
-    ControllerSlotCount * ControllerSurfaceControlCount * ControllerLayerCount;
+    ControllerSlotCount * ControllerPatternCount * ControllerTargetChannelCount * ControllerSurfaceControlCount * ControllerLayerCount;
 
 inline constexpr const char* HardwareCaptureId = "hardwareCapture";
 inline constexpr const char* ControllerLayerId = "controllerLayer";
+inline constexpr const char* ControllerPatternId = "controllerPattern";
+inline constexpr const char* ControllerTargetChannelId = "controllerTargetChannel";
 inline constexpr const char* SurfaceEditControllerId = "surfaceEditController";
 inline constexpr const char* SurfaceEditControlId = "surfaceEditControl";
 inline constexpr const char* SurfaceEditLayerId = "surfaceEditLayer";
@@ -39,9 +43,10 @@ inline juce::String controllerMapParameterId(int slot, const char* suffix)
     return "map" + juce::String(slot + 1) + suffix;
 }
 
-inline int controllerSurfaceMapIndex(int controllerSlot, int control, int layer)
+inline int controllerSurfaceMapIndex(int controllerSlot, int pattern, int targetChannel, int control, int layer)
 {
-    return ((controllerSlot * ControllerSurfaceControlCount) + control) * ControllerLayerCount + layer;
+    return (((((controllerSlot * ControllerPatternCount) + pattern) * ControllerTargetChannelCount + targetChannel)
+        * ControllerSurfaceControlCount + control) * ControllerLayerCount) + layer;
 }
 
 inline bool isControllerFaderControl(int control)
@@ -82,6 +87,22 @@ inline juce::StringArray controllerLayerChoices()
     juce::StringArray choices;
     for (int layer = 1; layer <= ControllerLayerCount; ++layer)
         choices.add("Map " + juce::String(layer));
+    return choices;
+}
+
+inline juce::StringArray controllerPatternChoices()
+{
+    juce::StringArray choices;
+    for (int pattern = 1; pattern <= ControllerPatternCount; ++pattern)
+        choices.add("Pattern " + juce::String(pattern));
+    return choices;
+}
+
+inline juce::StringArray controllerTargetChannelChoices()
+{
+    juce::StringArray choices;
+    for (int channel = 1; channel <= ControllerTargetChannelCount; ++channel)
+        choices.add("Ch " + juce::String(channel));
     return choices;
 }
 

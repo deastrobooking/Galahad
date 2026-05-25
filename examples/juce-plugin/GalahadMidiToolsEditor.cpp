@@ -6,7 +6,7 @@
 namespace
 {
 constexpr int EditorWidth = 1040;
-constexpr int EditorHeight = 760;
+constexpr int EditorHeight = 880;
 constexpr int Margin = 18;
 constexpr int RowHeight = 70;
 constexpr int Gap = 10;
@@ -75,6 +75,20 @@ juce::String hardwareStatusText(const juce::StringArray& names)
         return "No Akai/Novation inputs opened";
 
     return "Opened: " + names.joinIntoString(", ");
+}
+
+int parameterIntValue(const juce::AudioProcessorValueTreeState& parameters, const char* id)
+{
+    if (const auto* parameter = parameters.getRawParameterValue(id))
+        return static_cast<int>(std::lround(parameter->load(std::memory_order_relaxed)));
+
+    return 0;
+}
+
+void setChoiceParameter(juce::AudioProcessorValueTreeState& parameters, const char* id, int index)
+{
+    if (auto* parameter = parameters.getParameter(id))
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(static_cast<float>(index)));
 }
 } // namespace
 
@@ -376,12 +390,24 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
     contextLabel_.setFont(juce::FontOptions(13.0f));
     addAndMakeVisible(contextLabel_);
 
+    surfaceLabel_.setText("Surface Assignment", juce::dontSendNotification);
+    surfaceLabel_.setJustificationType(juce::Justification::centredLeft);
+    surfaceLabel_.setColour(juce::Label::textColourId, Text);
+    surfaceLabel_.setFont(juce::FontOptions(15.0f, juce::Font::bold));
+    addAndMakeVisible(surfaceLabel_);
+
+    surfaceSummaryLabel_.setJustificationType(juce::Justification::centredRight);
+    surfaceSummaryLabel_.setColour(juce::Label::textColourId, MutedText);
+    surfaceSummaryLabel_.setFont(juce::FontOptions(13.0f));
+    addAndMakeVisible(surfaceSummaryLabel_);
+
     for (int slot = 0; slot < static_cast<int>(controllerButtons_.size()); ++slot)
     {
         auto& button = controllerButtons_[static_cast<size_t>(slot)];
         configurePanelButton(button, Accent);
         button.onClick = [this, slot] {
             selectedControllerSlot_ = slot;
+            setChoiceParameter(processor_.parameters(), galahad::plugin::SurfaceEditControllerId, slot);
             updateSetupState();
         };
         addAndMakeVisible(button);
@@ -394,8 +420,8 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
         configurePanelButton(button, PinkRed);
         button.onClick = [this, layer] {
             selectedLayer_ = layer;
-            if (auto* parameter = processor_.parameters().getParameter(galahad::plugin::ControllerLayerId))
-                parameter->setValueNotifyingHost(parameter->convertTo0to1(static_cast<float>(layer)));
+            setChoiceParameter(processor_.parameters(), galahad::plugin::ControllerLayerId, layer);
+            setChoiceParameter(processor_.parameters(), galahad::plugin::SurfaceEditLayerId, layer);
             updateSetupState();
         };
         addAndMakeVisible(button);
@@ -407,6 +433,7 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
         button->setAccent(channel < 8 ? Accent : Good);
         button->onClick = [this, channel] {
             selectedTargetChannel_ = channel + 1;
+            setChoiceParameter(processor_.parameters(), galahad::plugin::ControllerTargetChannelId, channel);
             updateSetupState();
         };
         addAndMakeVisible(*button);
@@ -419,11 +446,41 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
         button->setAccent(clip % 2 == 0 ? AccentTwo : Good);
         button->onClick = [this, clip] {
             selectedAutomationSlot_ = clip;
+            setChoiceParameter(processor_.parameters(), galahad::plugin::ControllerPatternId, clip);
             updateSetupState();
         };
         addAndMakeVisible(*button);
         automationButtons_[static_cast<size_t>(clip)] = std::move(button);
     }
+
+    surfaceController_.addItemList(galahad::plugin::controllerSlotChoices(), 1);
+    surfaceControl_.addItemList(galahad::plugin::controllerSurfaceControlChoices(), 1);
+    surfaceMap_.addItemList(galahad::plugin::controllerLayerChoices(), 1);
+    surfaceInputChannel_.addItemList(galahad::plugin::inputChannelChoices(), 1);
+    surfaceOutputChannel_.addItemList(galahad::plugin::outputChannelChoices(), 1);
+    configureCombo(surfaceController_);
+    configureCombo(surfaceControl_);
+    configureCombo(surfaceMap_);
+    configureCombo(surfaceInputChannel_);
+    configureCombo(surfaceOutputChannel_);
+    addAndMakeVisible(surfaceController_);
+    addAndMakeVisible(surfaceControl_);
+    addAndMakeVisible(surfaceMap_);
+    addAndMakeVisible(surfaceInputChannel_);
+    addAndMakeVisible(surfaceOutputChannel_);
+
+    surfaceEnabled_.setButtonText("On");
+    surfaceEnabled_.setColour(juce::ToggleButton::textColourId, Text);
+    addAndMakeVisible(surfaceEnabled_);
+
+    configureSlider(surfaceInputCc_);
+    configureSlider(surfaceOutputCc_);
+    configureSlider(surfaceMinimum_);
+    configureSlider(surfaceMaximum_);
+    addAndMakeVisible(surfaceInputCc_);
+    addAndMakeVisible(surfaceOutputCc_);
+    addAndMakeVisible(surfaceMinimum_);
+    addAndMakeVisible(surfaceMaximum_);
 
     hardwareCaptureButton_.setButtonText("Hardware");
     hardwareCaptureButton_.setColour(juce::ToggleButton::textColourId, Text);
@@ -451,6 +508,48 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
         galahad::plugin::MapThruId,
         thruButton_);
 
+    auto& parameters = processor_.parameters();
+    surfaceControllerAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        parameters,
+        galahad::plugin::SurfaceEditControllerId,
+        surfaceController_);
+    surfaceControlAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        parameters,
+        galahad::plugin::SurfaceEditControlId,
+        surfaceControl_);
+    surfaceMapAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        parameters,
+        galahad::plugin::SurfaceEditLayerId,
+        surfaceMap_);
+    surfaceEnabledAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        parameters,
+        galahad::plugin::SurfaceEditEnabledId,
+        surfaceEnabled_);
+    surfaceInputChannelAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        parameters,
+        galahad::plugin::SurfaceEditInputChannelId,
+        surfaceInputChannel_);
+    surfaceInputCcAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        parameters,
+        galahad::plugin::SurfaceEditInputCcId,
+        surfaceInputCc_);
+    surfaceOutputChannelAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        parameters,
+        galahad::plugin::SurfaceEditOutputChannelId,
+        surfaceOutputChannel_);
+    surfaceOutputCcAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        parameters,
+        galahad::plugin::SurfaceEditOutputCcId,
+        surfaceOutputCc_);
+    surfaceMinimumAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        parameters,
+        galahad::plugin::SurfaceEditMinimumId,
+        surfaceMinimum_);
+    surfaceMaximumAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        parameters,
+        galahad::plugin::SurfaceEditMaximumId,
+        surfaceMaximum_);
+
     activityView_ = std::make_unique<ActivityView>();
     addAndMakeVisible(*activityView_);
 
@@ -461,8 +560,10 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
     }
 
     processor_.refreshHardwareMidiInputs();
+    processor_.syncAndLoadSurfaceEditorSelection();
     updateHardwareStatus();
     updateSetupState();
+    updateSurfaceSummary();
     lastHardwareInputCount_ = processor_.activeHardwareInputCount();
     lastHardwareCaptureState_ = hardwareCaptureButton_.getToggleState();
 
@@ -477,7 +578,7 @@ void GalahadMidiToolsEditor::paint(juce::Graphics& graphics)
     graphics.fillAll(Background);
 
     auto area = getLocalBounds().reduced(Margin);
-    area.removeFromTop(378);
+    area.removeFromTop(500);
 
     graphics.setColour(MutedText);
     graphics.setFont(12.0f);
@@ -507,6 +608,18 @@ void GalahadMidiToolsEditor::paint(juce::Graphics& graphics)
     graphics.drawText("Automation Clips", clips.removeFromTop(18), juce::Justification::centredLeft);
     graphics.drawText("Performance Layers", layers.removeFromTop(18), juce::Justification::centredLeft);
     graphics.drawText("Target Channel", lower.removeFromTop(18), juce::Justification::centredLeft);
+
+    auto surface = getLocalBounds().reduced(Margin);
+    surface.removeFromTop(48 + 22 + 8 + 42 + 8 + 140);
+    surface.removeFromTop(28);
+    auto surfaceHeader = surface.removeFromTop(18);
+    graphics.drawText("Controller", surfaceHeader.removeFromLeft(130), juce::Justification::centredLeft);
+    graphics.drawText("Control", surfaceHeader.removeFromLeft(160), juce::Justification::centredLeft);
+    graphics.drawText("Map", surfaceHeader.removeFromLeft(92), juce::Justification::centredLeft);
+    graphics.drawText("State", surfaceHeader.removeFromLeft(76), juce::Justification::centredLeft);
+    graphics.drawText("Input", surfaceHeader.removeFromLeft(206), juce::Justification::centredLeft);
+    graphics.drawText("Output", surfaceHeader.removeFromLeft(206), juce::Justification::centredLeft);
+    graphics.drawText("Range", surfaceHeader, juce::Justification::centredLeft);
 }
 
 void GalahadMidiToolsEditor::resized()
@@ -568,6 +681,32 @@ void GalahadMidiToolsEditor::resized()
             channelButtons_[static_cast<size_t>(channel)]->setBounds(bounds);
     }
 
+    auto surfaceArea = area.removeFromTop(122);
+    auto surfaceTop = surfaceArea.removeFromTop(28);
+    surfaceLabel_.setBounds(surfaceTop.removeFromLeft(180));
+    surfaceSummaryLabel_.setBounds(surfaceTop);
+    surfaceArea.removeFromTop(18);
+    auto surfaceRow = surfaceArea.removeFromTop(34);
+    surfaceController_.setBounds(surfaceRow.removeFromLeft(122).reduced(0, 2));
+    surfaceRow.removeFromLeft(8);
+    surfaceControl_.setBounds(surfaceRow.removeFromLeft(152).reduced(0, 2));
+    surfaceRow.removeFromLeft(8);
+    surfaceMap_.setBounds(surfaceRow.removeFromLeft(84).reduced(0, 2));
+    surfaceRow.removeFromLeft(8);
+    surfaceEnabled_.setBounds(surfaceRow.removeFromLeft(68).reduced(0, 2));
+    surfaceRow.removeFromLeft(8);
+    surfaceInputChannel_.setBounds(surfaceRow.removeFromLeft(96).reduced(0, 2));
+    surfaceRow.removeFromLeft(8);
+    surfaceInputCc_.setBounds(surfaceRow.removeFromLeft(118).reduced(0, 2));
+    surfaceRow.removeFromLeft(8);
+    surfaceOutputChannel_.setBounds(surfaceRow.removeFromLeft(96).reduced(0, 2));
+    surfaceRow.removeFromLeft(8);
+    surfaceOutputCc_.setBounds(surfaceRow.removeFromLeft(118).reduced(0, 2));
+    surfaceRow.removeFromLeft(8);
+    surfaceMinimum_.setBounds(surfaceRow.removeFromLeft(110).reduced(0, 2));
+    surfaceRow.removeFromLeft(8);
+    surfaceMaximum_.setBounds(surfaceRow.removeFromLeft(110).reduced(0, 2));
+
     area.removeFromTop(12);
     if (activityView_ != nullptr)
         activityView_->setBounds(area.removeFromTop(86));
@@ -615,6 +754,51 @@ void GalahadMidiToolsEditor::timerCallback()
         }
     }
 
+    if (const auto* patternValue = processor_.parameters().getRawParameterValue(galahad::plugin::ControllerPatternId))
+    {
+        const int activePattern = juce::jlimit(0,
+                                              galahad::plugin::ControllerPatternCount - 1,
+                                              static_cast<int>(std::lround(patternValue->load(std::memory_order_relaxed))));
+        if (activePattern != selectedAutomationSlot_)
+        {
+            selectedAutomationSlot_ = activePattern;
+            updateSetupState();
+        }
+    }
+
+    if (const auto* targetValue = processor_.parameters().getRawParameterValue(galahad::plugin::ControllerTargetChannelId))
+    {
+        const int activeTargetChannel = juce::jlimit(0,
+                                                    galahad::plugin::ControllerTargetChannelCount - 1,
+                                                    static_cast<int>(std::lround(targetValue->load(std::memory_order_relaxed)))) + 1;
+        if (activeTargetChannel != selectedTargetChannel_)
+        {
+            selectedTargetChannel_ = activeTargetChannel;
+            updateSetupState();
+        }
+    }
+
+    const int surfaceController = parameterIntValue(processor_.parameters(), galahad::plugin::SurfaceEditControllerId);
+    const int surfaceControl = parameterIntValue(processor_.parameters(), galahad::plugin::SurfaceEditControlId);
+    const int surfaceMap = parameterIntValue(processor_.parameters(), galahad::plugin::SurfaceEditLayerId);
+    const int surfacePattern = parameterIntValue(processor_.parameters(), galahad::plugin::ControllerPatternId);
+    const int surfaceTargetChannel = parameterIntValue(processor_.parameters(), galahad::plugin::ControllerTargetChannelId);
+    if (surfaceController != lastSurfaceController_
+        || surfaceControl != lastSurfaceControl_
+        || surfaceMap != lastSurfaceMap_
+        || surfacePattern != lastSurfacePattern_
+        || surfaceTargetChannel != lastSurfaceTargetChannel_)
+    {
+        selectedControllerSlot_ = juce::jlimit(0, static_cast<int>(controllerButtons_.size()) - 1, surfaceController);
+        lastSurfaceController_ = surfaceController;
+        lastSurfaceControl_ = surfaceControl;
+        lastSurfaceMap_ = surfaceMap;
+        lastSurfacePattern_ = surfacePattern;
+        lastSurfaceTargetChannel_ = surfaceTargetChannel;
+        processor_.syncAndLoadSurfaceEditorSelection();
+        updateSetupState();
+    }
+
     const auto input = processor_.lastControllerInput();
     if (input.serial != lastInputSerial_)
     {
@@ -637,6 +821,7 @@ void GalahadMidiToolsEditor::timerCallback()
     activityView_->decay();
     for (auto& row : rows_)
         row->decay();
+    updateSurfaceSummary();
 }
 
 void GalahadMidiToolsEditor::beginLearn(int slot)
@@ -705,6 +890,45 @@ void GalahadMidiToolsEditor::updateSetupState()
     contextLabel_.setText(context, juce::dontSendNotification);
 
     repaint();
+}
+
+void GalahadMidiToolsEditor::updateSurfaceSummary()
+{
+    const auto& parameters = processor_.parameters();
+    const int controller = juce::jlimit(0,
+                                       galahad::plugin::ControllerSlotCount - 1,
+                                       parameterIntValue(parameters, galahad::plugin::SurfaceEditControllerId));
+    const int control = juce::jlimit(0,
+                                    galahad::plugin::ControllerSurfaceControlCount - 1,
+                                    parameterIntValue(parameters, galahad::plugin::SurfaceEditControlId));
+    const int layer = juce::jlimit(0,
+                                  galahad::plugin::ControllerLayerCount - 1,
+                                  parameterIntValue(parameters, galahad::plugin::SurfaceEditLayerId));
+    const int pattern = juce::jlimit(0,
+                                    galahad::plugin::ControllerPatternCount - 1,
+                                    parameterIntValue(parameters, galahad::plugin::ControllerPatternId));
+    const int targetChannel = juce::jlimit(0,
+                                          galahad::plugin::ControllerTargetChannelCount - 1,
+                                          parameterIntValue(parameters, galahad::plugin::ControllerTargetChannelId));
+    const int enabled = parameterIntValue(parameters, galahad::plugin::SurfaceEditEnabledId);
+    const int inputChannel = juce::jlimit(0, 16, parameterIntValue(parameters, galahad::plugin::SurfaceEditInputChannelId));
+    const int inputCc = juce::jlimit(0, 127, parameterIntValue(parameters, galahad::plugin::SurfaceEditInputCcId));
+    const int outputChannel = juce::jlimit(0, 15, parameterIntValue(parameters, galahad::plugin::SurfaceEditOutputChannelId));
+    const int outputCc = juce::jlimit(0, 127, parameterIntValue(parameters, galahad::plugin::SurfaceEditOutputCcId));
+    const int minimum = juce::jlimit(0, 127, parameterIntValue(parameters, galahad::plugin::SurfaceEditMinimumId));
+    const int maximum = juce::jlimit(0, 127, parameterIntValue(parameters, galahad::plugin::SurfaceEditMaximumId));
+
+    const auto inputText = inputChannel == 0 ? "Omni" : "Ch " + juce::String(inputChannel);
+    const auto text = "C" + juce::String(controller + 1)
+        + " " + galahad::plugin::controllerSurfaceControlName(control)
+        + " P" + juce::String(pattern + 1)
+        + " Ch " + juce::String(targetChannel + 1)
+        + " Map " + juce::String(layer + 1)
+        + ": " + (enabled >= 1 ? "On" : "Off")
+        + "  " + inputText + " CC " + juce::String(inputCc)
+        + " -> Ch " + juce::String(outputChannel + 1) + " CC " + juce::String(outputCc)
+        + "  " + juce::String(minimum) + ".." + juce::String(maximum);
+    surfaceSummaryLabel_.setText(text, juce::dontSendNotification);
 }
 
 juce::String GalahadMidiToolsEditor::controllerSlotText(int slot) const
