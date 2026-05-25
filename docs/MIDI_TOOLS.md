@@ -180,9 +180,25 @@ Random  = each triggered note chooses a random channel
 Step    = step 1..16 maps directly to channel 1..16
 ```
 
+## Master Setup Page
+
+The plugin editor starts with a master setup page for performance mapping:
+
+```text
+Controller slots  1..8 visible hardware/controller contexts
+Layer buttons     A..D performance mapping contexts
+Target channels   1..16 quick channel focus buttons
+Clip circles      C1..C4 automation clip contexts
+```
+
+The current build keeps controller slots, layers, target channels, and clip
+circles as setup context while the learned map slots below perform the actual
+MIDI remapping. This gives the performance layout a stable home before the
+engine grows true per-device and per-layer banks.
+
 ## Controller Mapper
 
-The plugin editor includes four controller-map slots for Drop-style performance
+The editor includes four controller-map slots for Drop-style performance
 layering:
 
 ```text
