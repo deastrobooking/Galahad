@@ -19,9 +19,18 @@ struct SequencerStep
     uint8_t probability{ 127 };
 };
 
+enum class SequencerChannelMode : uint8_t
+{
+    Fixed = 0,
+    Rotate,
+    Random,
+    Step
+};
+
 struct SequencerConfig
 {
     uint8_t channel{ 1 };
+    SequencerChannelMode channelMode{ SequencerChannelMode::Fixed };
     uint8_t rootNote{ 60 };
     uint8_t steps{ 16 };
     double rateDivisor{ 4.0 };
@@ -47,6 +56,7 @@ public:
 private:
     static uint32_t nextRandom(uint32_t& state) noexcept;
     static uint8_t clampMidi(int value) noexcept;
+    uint8_t channelForStep(size_t stepIndex, uint32_t randomValue) const noexcept;
 
     SequencerConfig config_{};
     std::array<SequencerStep, MaxSteps> steps_{};
@@ -54,6 +64,7 @@ private:
     int samplesUntilNextStep_{ 0 };
     bool hasPendingNoteOff_{ false };
     uint8_t pendingNote_{ 0 };
+    uint8_t pendingChannel_{ 1 };
     int pendingNoteOffSamples_{ 0 };
     uint32_t randomState_{ 0x4d595df4u };
 };

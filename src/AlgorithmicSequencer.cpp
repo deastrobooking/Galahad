@@ -24,6 +24,17 @@ void AlgorithmicSequencer::setConfig(const SequencerConfig& config) noexcept
 {
     config_ = config;
     config_.channel = std::clamp<uint8_t>(config_.channel, 1, 16);
+    switch (config_.channelMode)
+    {
+        case SequencerChannelMode::Fixed:
+        case SequencerChannelMode::Rotate:
+        case SequencerChannelMode::Random:
+        case SequencerChannelMode::Step:
+            break;
+        default:
+            config_.channelMode = SequencerChannelMode::Fixed;
+            break;
+    }
     config_.rootNote = clampMidi(config_.rootNote);
     config_.steps = std::clamp<uint8_t>(config_.steps, 1, static_cast<uint8_t>(MaxSteps));
     config_.rateDivisor = std::max(0.25, config_.rateDivisor);
@@ -80,6 +91,7 @@ void AlgorithmicSequencer::reset() noexcept
     samplesUntilNextStep_ = 0;
     hasPendingNoteOff_ = false;
     pendingNote_ = 0;
+    pendingChannel_ = config_.channel;
     pendingNoteOffSamples_ = 0;
     randomState_ = 0x4d595df4u;
 }
@@ -97,7 +109,7 @@ size_t AlgorithmicSequencer::process(double bpm, int sampleRate, int numSamples,
     {
         if (pendingNoteOffSamples_ < numSamples)
         {
-            output[count++] = MidiEvent{ MidiEventType::NoteOff, config_.channel, pendingNote_, 0, pendingNoteOffSamples_ };
+            output[count++] = MidiEvent{ MidiEventType::NoteOff, pendingChannel_, pendingNote_, 0, pendingNoteOffSamples_ };
             hasPendingNoteOff_ = false;
         }
         else
@@ -120,19 +132,21 @@ size_t AlgorithmicSequencer::process(double bpm, int sampleRate, int numSamples,
         }
 
         const auto& current = steps_[stepIndex_];
-        const uint32_t randomValue = nextRandom(randomState_) & 0x7f;
-        if (current.enabled && randomValue <= current.probability)
+        const uint32_t randomValue = nextRandom(randomState_);
+        if (current.enabled && (randomValue & 0x7f) <= current.probability)
         {
+            const uint8_t channel = channelForStep(stepIndex_, randomValue);
             const uint8_t note = clampMidi(static_cast<int>(current.note) + current.transpose);
-            output[count++] = MidiEvent{ MidiEventType::NoteOn, config_.channel, note, current.velocity, cursor };
+            output[count++] = MidiEvent{ MidiEventType::NoteOn, channel, note, current.velocity, cursor };
 
             const int gateSamples = std::max(1, (stepSamples * static_cast<int>(current.gatePercent)) / 100);
             if (count < output.size() && cursor + gateSamples < numSamples)
-                output[count++] = MidiEvent{ MidiEventType::NoteOff, config_.channel, note, 0, cursor + gateSamples };
+                output[count++] = MidiEvent{ MidiEventType::NoteOff, channel, note, 0, cursor + gateSamples };
             else
             {
                 hasPendingNoteOff_ = true;
                 pendingNote_ = note;
+                pendingChannel_ = channel;
                 pendingNoteOffSamples_ = cursor + gateSamples - numSamples;
             }
         }
@@ -155,5 +169,21 @@ uint32_t AlgorithmicSequencer::nextRandom(uint32_t& state) noexcept
 uint8_t AlgorithmicSequencer::clampMidi(int value) noexcept
 {
     return static_cast<uint8_t>(std::clamp(value, 0, 127));
+}
+
+uint8_t AlgorithmicSequencer::channelForStep(size_t stepIndex, uint32_t randomValue) const noexcept
+{
+    switch (config_.channelMode)
+    {
+        case SequencerChannelMode::Rotate:
+            return static_cast<uint8_t>(1 + ((config_.channel - 1 + stepIndex) % 16));
+        case SequencerChannelMode::Random:
+            return static_cast<uint8_t>(1 + ((randomValue >> 8) % 16));
+        case SequencerChannelMode::Step:
+            return static_cast<uint8_t>(1 + (stepIndex % 16));
+        case SequencerChannelMode::Fixed:
+        default:
+            return config_.channel;
+    }
 }
 } // namespace galahad

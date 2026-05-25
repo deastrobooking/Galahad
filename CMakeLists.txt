@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Galahad VERSION 0.1.2 LANGUAGES C CXX)
+project(Galahad VERSION 0.2.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -88,6 +88,9 @@ if(GALAHAD_BUILD_JUCE_MIDI_TOOLS)
 
     target_sources(GalahadMidiTools
         PRIVATE
+            examples/juce-plugin/GalahadMidiToolsEditor.cpp
+            examples/juce-plugin/GalahadMidiToolsEditor.h
+            examples/juce-plugin/GalahadMidiToolsParameters.h
             examples/juce-plugin/GalahadMidiToolsProcessor.cpp
             examples/juce-plugin/GalahadMidiToolsProcessor.h
     )
@@ -99,6 +102,7 @@ if(GALAHAD_BUILD_JUCE_MIDI_TOOLS)
             juce::juce_audio_devices
             juce::juce_audio_plugin_client
             juce::juce_audio_processors
+            juce::juce_gui_basics
         PUBLIC
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags

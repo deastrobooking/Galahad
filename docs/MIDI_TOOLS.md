@@ -99,34 +99,36 @@ Tools processor:
 Current plugin defaults:
 
 ```text
-Sequencer: 16 steps, 5 Euclidean pulses, root note 48, channel 1
+Sequencer: 16 steps, 5 Euclidean pulses, root note 48, channel 1, fixed channel mode
 LFO:       CC 74, channel 1, triangle, 0.2 Hz, range 24..104
 Routing:   pass input through to channel 1
 ```
 
 ## Plugin Parameters
 
-The VST3/Standalone target is a silent MIDI-source instrument. It exposes the
-modular engine as automatable plugin parameters. Ableton can map these directly,
-and the existing selected-device Remote Script controls can edit them when
-`Galahad MIDI Tools` is the selected device.
+The VST3/Standalone target is a silent MIDI-source instrument with a built-in
+controller mapper. It exposes the modular engine as automatable plugin
+parameters. Ableton can map these directly, and the existing selected-device
+Remote Script controls can edit them when `Galahad MIDI Tools` is the selected
+device.
 
 First device bank:
 
 ```text
 Seq Run
 Seq Ch
+Seq Ch Mode
 Seq Root
 Seq Rate
 Seq Steps
 Seq Pulses
 Seq Rotate
-Seq Prob
 ```
 
 Second device bank:
 
 ```text
+Seq Prob
 Seq Gate
 Seq Vel
 LFO On
@@ -134,12 +136,12 @@ LFO Ch
 LFO CC
 LFO Shape
 LFO Rate
-LFO Min
 ```
 
 Third device bank:
 
 ```text
+LFO Min
 LFO Max
 Route On
 Route In Ch
@@ -147,11 +149,87 @@ Route Out Ch
 Route Transpose
 Route Vel
 Route Notes
-Route CCs
 ```
+
+Fourth device bank:
+
+```text
+Route CCs
+Hardware Capture
+Map Thru
+Map 1 On
+Map 1 In Ch
+Map 1 In CC
+Map 1 Out Ch
+Map 1 Out CC
+Map 1 Min
+Map 1 Max
+```
+
+Additional banks expose the same controller mapping parameters for map slots 2
+through 4.
 
 `Sequencer Rate` is in steps per beat. The default value `4.0` means sixteenth
 notes at the host tempo. `Route Input Channel` accepts `0` for omni.
+`Sequencer Channel Mode` controls note output channel selection:
+
+```text
+Fixed   = every sequencer note uses Seq Ch
+Rotate  = notes advance through channels from Seq Ch
+Random  = each triggered note chooses a random channel
+Step    = step 1..16 maps directly to channel 1..16
+```
+
+## Controller Mapper
+
+The plugin editor includes four controller-map slots for Drop-style performance
+layering:
+
+```text
+Hardware     opens Akai/Novation controller inputs directly
+Rescan       rechecks connected MIDI inputs
+Map On       enables the slot
+Learn        captures the next incoming CC into the input channel and CC fields
+Input        matches a specific channel or Omni
+Output       emits a remapped CC on a selected MIDI channel
+Min/Max      scales or inverts the outgoing value range
+Map Thru     keeps the original mapped CC alongside generated outputs
+```
+
+Multiple slots can listen to the same input CC, so one hardware knob can fan out
+to several destinations. With `Map Thru` off, matched source CCs are intercepted
+and replaced by their mapped outputs. With `Map Thru` on, Galahad layers the
+mapped outputs on top of the original controller stream.
+
+The editor visualizes the last incoming CC, the last mapped output, and per-slot
+activity.
+
+Hardware capture currently auto-opens input devices whose names include:
+
+```text
+Akai
+MIDImix
+MIDI Mix
+Novation
+Launch Control
+```
+
+If Ableton is also routing the same physical controller ports into the Galahad
+track, disable that duplicate track input or turn `Map Thru` off to avoid doubled
+controller messages.
+
+## Drop-Inspired Roadmap
+
+Galahad is moving toward a software performance-control brain inspired by
+standalone snapshot controllers:
+
+```text
+1. Controller layers and macro fan-out
+2. Snapshot capture and recall for every map/sequencer/router state
+3. Timed Drop transitions over 1..32 bars
+4. Curves per macro destination
+5. OSC and Remote Script hooks for Live clips, tracks, devices, and scenes
+```
 
 ## Ableton Control Workflow
 

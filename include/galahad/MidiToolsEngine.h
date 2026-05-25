@@ -15,6 +15,7 @@ struct SequencerModuleConfig
 {
     bool enabled{ true };
     uint8_t channel{ 1 };
+    SequencerChannelMode channelMode{ SequencerChannelMode::Fixed };
     uint8_t rootNote{ 48 };
     uint8_t steps{ 16 };
     uint8_t pulses{ 5 };

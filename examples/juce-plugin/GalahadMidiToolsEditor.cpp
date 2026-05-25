@@ -1,0 +1,478 @@
+#include "GalahadMidiToolsEditor.h"
+
+#include <algorithm>
+
+namespace
+{
+constexpr int EditorWidth = 920;
+constexpr int EditorHeight = 560;
+constexpr int Margin = 18;
+constexpr int RowHeight = 70;
+constexpr int Gap = 10;
+
+const juce::Colour Background{ 0xff11151c };
+const juce::Colour Panel{ 0xff1a202a };
+const juce::Colour PanelAlt{ 0xff202734 };
+const juce::Colour Border{ 0xff343d4d };
+const juce::Colour Text{ 0xffe8edf3 };
+const juce::Colour MutedText{ 0xff9aa7b6 };
+const juce::Colour Accent{ 0xff38bdf8 };
+const juce::Colour AccentTwo{ 0xffffc857 };
+const juce::Colour Good{ 0xff7bd88f };
+
+juce::String ccText(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot)
+{
+    if (snapshot.controller < 0)
+        return "Ch --  CC --  000";
+
+    return "Ch " + juce::String(snapshot.channel).paddedLeft('0', 2)
+        + "  CC " + juce::String(snapshot.controller).paddedLeft('0', 3)
+        + "  " + juce::String(snapshot.value).paddedLeft('0', 3);
+}
+
+void configureCombo(juce::ComboBox& combo)
+{
+    combo.setJustificationType(juce::Justification::centred);
+    combo.setColour(juce::ComboBox::backgroundColourId, PanelAlt);
+    combo.setColour(juce::ComboBox::outlineColourId, Border);
+    combo.setColour(juce::ComboBox::textColourId, Text);
+    combo.setColour(juce::ComboBox::arrowColourId, Accent);
+}
+
+void configureSlider(juce::Slider& slider)
+{
+    slider.setSliderStyle(juce::Slider::LinearBar);
+    slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 42, 20);
+    slider.setRange(0.0, 127.0, 1.0);
+    slider.setColour(juce::Slider::trackColourId, Accent.withAlpha(0.45f));
+    slider.setColour(juce::Slider::backgroundColourId, PanelAlt);
+    slider.setColour(juce::Slider::textBoxTextColourId, Text);
+    slider.setColour(juce::Slider::textBoxBackgroundColourId, PanelAlt);
+    slider.setColour(juce::Slider::textBoxOutlineColourId, Border);
+}
+
+juce::Rectangle<int> takeColumn(juce::Rectangle<int>& area, int width)
+{
+    auto column = area.removeFromLeft(width);
+    area.removeFromLeft(Gap);
+    return column;
+}
+
+juce::String hardwareStatusText(const juce::StringArray& names)
+{
+    if (names.isEmpty())
+        return "No Akai/Novation inputs opened";
+
+    return "Opened: " + names.joinIntoString(", ");
+}
+} // namespace
+
+class GalahadMidiToolsEditor::ActivityView final : public juce::Component
+{
+public:
+    void setInput(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot)
+    {
+        input_ = snapshot;
+        inputPulse_ = 1.0f;
+        repaint();
+    }
+
+    void setOutput(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot)
+    {
+        output_ = snapshot;
+        outputPulse_ = 1.0f;
+        repaint();
+    }
+
+    void decay()
+    {
+        inputPulse_ = std::max(0.0f, inputPulse_ - 0.06f);
+        outputPulse_ = std::max(0.0f, outputPulse_ - 0.06f);
+        repaint();
+    }
+
+    void paint(juce::Graphics& graphics) override
+    {
+        auto bounds = getLocalBounds().toFloat();
+        graphics.setColour(Panel);
+        graphics.fillRoundedRectangle(bounds, 8.0f);
+        graphics.setColour(Border);
+        graphics.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, 1.0f);
+
+        auto area = getLocalBounds().reduced(18, 14);
+        drawLane(graphics, area.removeFromLeft(area.getWidth() / 2 - 8), "Input", ccText(input_), input_.value, Accent, inputPulse_);
+        area.removeFromLeft(16);
+        const auto outputText = output_.slot >= 0
+            ? "S" + juce::String(output_.slot + 1) + "  " + ccText(output_)
+            : ccText(output_);
+        drawLane(graphics, area, "Output", outputText, output_.value, AccentTwo, outputPulse_);
+    }
+
+private:
+    static void drawLane(juce::Graphics& graphics,
+                         juce::Rectangle<int> area,
+                         const juce::String& label,
+                         const juce::String& valueText,
+                         int value,
+                         juce::Colour colour,
+                         float pulse)
+    {
+        graphics.setColour(MutedText);
+        graphics.setFont(13.0f);
+        graphics.drawText(label, area.removeFromTop(18), juce::Justification::centredLeft);
+
+        graphics.setColour(Text);
+        graphics.setFont(24.0f);
+        graphics.drawText(valueText, area.removeFromTop(34), juce::Justification::centredLeft);
+
+        auto meter = area.removeFromTop(10).reduced(0, 2).toFloat();
+        graphics.setColour(PanelAlt);
+        graphics.fillRoundedRectangle(meter, 4.0f);
+
+        const float width = meter.getWidth() * juce::jlimit(0.0f, 1.0f, static_cast<float>(value) / 127.0f);
+        auto active = meter.withWidth(width);
+        graphics.setColour(colour.withAlpha(0.55f + 0.35f * pulse));
+        graphics.fillRoundedRectangle(active, 4.0f);
+    }
+
+    GalahadMidiToolsProcessor::ControllerSnapshot input_{};
+    GalahadMidiToolsProcessor::ControllerSnapshot output_{};
+    float inputPulse_{ 0.0f };
+    float outputPulse_{ 0.0f };
+};
+
+class GalahadMidiToolsEditor::MapRow final : public juce::Component
+{
+public:
+    MapRow(GalahadMidiToolsEditor& owner, GalahadMidiToolsProcessor& processor, int slot)
+        : owner_(owner),
+          slot_(slot)
+    {
+        slotLabel_.setText(juce::String(slot + 1), juce::dontSendNotification);
+        slotLabel_.setJustificationType(juce::Justification::centred);
+        slotLabel_.setColour(juce::Label::textColourId, Text);
+        addAndMakeVisible(slotLabel_);
+
+        enabledButton_.setButtonText("On");
+        enabledButton_.setColour(juce::ToggleButton::textColourId, Text);
+        addAndMakeVisible(enabledButton_);
+
+        learnButton_.setButtonText("Learn");
+        learnButton_.setColour(juce::TextButton::buttonColourId, PanelAlt);
+        learnButton_.setColour(juce::TextButton::buttonOnColourId, Accent);
+        learnButton_.setColour(juce::TextButton::textColourOffId, Text);
+        learnButton_.onClick = [this] { owner_.beginLearn(slot_); };
+        addAndMakeVisible(learnButton_);
+
+        inputChannel_.addItemList(galahad::plugin::inputChannelChoices(), 1);
+        outputChannel_.addItemList(galahad::plugin::outputChannelChoices(), 1);
+        configureCombo(inputChannel_);
+        configureCombo(outputChannel_);
+        addAndMakeVisible(inputChannel_);
+        addAndMakeVisible(outputChannel_);
+
+        configureSlider(inputCc_);
+        configureSlider(outputCc_);
+        configureSlider(minimum_);
+        configureSlider(maximum_);
+        addAndMakeVisible(inputCc_);
+        addAndMakeVisible(outputCc_);
+        addAndMakeVisible(minimum_);
+        addAndMakeVisible(maximum_);
+
+        auto& parameters = processor.parameters();
+        enabledAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            parameters,
+            galahad::plugin::controllerMapParameterId(slot, galahad::plugin::MapEnabledSuffix),
+            enabledButton_);
+        inputChannelAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+            parameters,
+            galahad::plugin::controllerMapParameterId(slot, galahad::plugin::MapInputChannelSuffix),
+            inputChannel_);
+        inputCcAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters,
+            galahad::plugin::controllerMapParameterId(slot, galahad::plugin::MapInputCcSuffix),
+            inputCc_);
+        outputChannelAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+            parameters,
+            galahad::plugin::controllerMapParameterId(slot, galahad::plugin::MapOutputChannelSuffix),
+            outputChannel_);
+        outputCcAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters,
+            galahad::plugin::controllerMapParameterId(slot, galahad::plugin::MapOutputCcSuffix),
+            outputCc_);
+        minimumAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters,
+            galahad::plugin::controllerMapParameterId(slot, galahad::plugin::MapMinimumSuffix),
+            minimum_);
+        maximumAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters,
+            galahad::plugin::controllerMapParameterId(slot, galahad::plugin::MapMaximumSuffix),
+            maximum_);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(12, 12);
+        slotLabel_.setBounds(takeColumn(area, 34));
+        enabledButton_.setBounds(takeColumn(area, 54));
+        learnButton_.setBounds(takeColumn(area, 70));
+        inputChannel_.setBounds(takeColumn(area, 88));
+        inputCc_.setBounds(takeColumn(area, 94));
+        outputChannel_.setBounds(takeColumn(area, 88));
+        outputCc_.setBounds(takeColumn(area, 94));
+        minimum_.setBounds(takeColumn(area, 94));
+        maximum_.setBounds(takeColumn(area, 94));
+    }
+
+    void paint(juce::Graphics& graphics) override
+    {
+        auto bounds = getLocalBounds().toFloat();
+        graphics.setColour(slot_ % 2 == 0 ? Panel : PanelAlt);
+        graphics.fillRoundedRectangle(bounds, 6.0f);
+        graphics.setColour(isLearning_ ? Accent : Border);
+        graphics.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, isLearning_ ? 2.0f : 1.0f);
+
+        auto activityBounds = getLocalBounds().removeFromRight(18).reduced(6, 12).toFloat();
+        graphics.setColour(PanelAlt.darker(0.3f));
+        graphics.fillRoundedRectangle(activityBounds, 3.0f);
+        graphics.setColour(Good.withAlpha(0.35f + 0.55f * activityLevel_));
+        graphics.fillRoundedRectangle(activityBounds.removeFromBottom(activityBounds.getHeight() * activityLevel_), 3.0f);
+    }
+
+    void setLearning(bool shouldLearn)
+    {
+        isLearning_ = shouldLearn;
+        learnButton_.setButtonText(isLearning_ ? "Listening" : "Learn");
+        repaint();
+    }
+
+    void learnFrom(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot)
+    {
+        enabledButton_.setToggleState(true, juce::sendNotificationSync);
+        inputChannel_.setSelectedId(snapshot.channel + 1, juce::sendNotificationSync);
+        inputCc_.setValue(snapshot.controller, juce::sendNotificationSync);
+    }
+
+    void pulse(int value)
+    {
+        activityLevel_ = juce::jlimit(0.0f, 1.0f, static_cast<float>(value) / 127.0f);
+        activityHold_ = 1.0f;
+        repaint();
+    }
+
+    void decay()
+    {
+        activityHold_ = std::max(0.0f, activityHold_ - 0.045f);
+        activityLevel_ *= 0.95f;
+        if (activityHold_ > 0.0f)
+            activityLevel_ = std::max(activityLevel_, 0.18f);
+        repaint();
+    }
+
+private:
+    GalahadMidiToolsEditor& owner_;
+    int slot_{ 0 };
+    juce::Label slotLabel_;
+    juce::ToggleButton enabledButton_;
+    juce::TextButton learnButton_;
+    juce::ComboBox inputChannel_;
+    juce::Slider inputCc_;
+    juce::ComboBox outputChannel_;
+    juce::Slider outputCc_;
+    juce::Slider minimum_;
+    juce::Slider maximum_;
+    bool isLearning_{ false };
+    float activityLevel_{ 0.0f };
+    float activityHold_{ 0.0f };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enabledAttachment_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> inputChannelAttachment_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inputCcAttachment_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputChannelAttachment_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputCcAttachment_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> minimumAttachment_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> maximumAttachment_;
+};
+
+GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioProcessor)
+    : juce::AudioProcessorEditor(audioProcessor),
+      processor_(audioProcessor)
+{
+    setSize(EditorWidth, EditorHeight);
+
+    titleLabel_.setText("Galahad Mapper", juce::dontSendNotification);
+    titleLabel_.setJustificationType(juce::Justification::centredLeft);
+    titleLabel_.setColour(juce::Label::textColourId, Text);
+    titleLabel_.setFont(juce::FontOptions(26.0f, juce::Font::bold));
+    addAndMakeVisible(titleLabel_);
+
+    versionLabel_.setText("MIDI Controller Layers", juce::dontSendNotification);
+    versionLabel_.setJustificationType(juce::Justification::centredLeft);
+    versionLabel_.setColour(juce::Label::textColourId, MutedText);
+    versionLabel_.setFont(juce::FontOptions(14.0f));
+    addAndMakeVisible(versionLabel_);
+
+    hardwareLabel_.setText(hardwareStatusText(processor_.activeHardwareInputNames()), juce::dontSendNotification);
+    hardwareLabel_.setJustificationType(juce::Justification::centredLeft);
+    hardwareLabel_.setColour(juce::Label::textColourId, MutedText);
+    hardwareLabel_.setFont(juce::FontOptions(13.0f));
+    addAndMakeVisible(hardwareLabel_);
+
+    hardwareCaptureButton_.setButtonText("Hardware");
+    hardwareCaptureButton_.setColour(juce::ToggleButton::textColourId, Text);
+    addAndMakeVisible(hardwareCaptureButton_);
+    hardwareCaptureAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor_.parameters(),
+        galahad::plugin::HardwareCaptureId,
+        hardwareCaptureButton_);
+
+    rescanButton_.setButtonText("Rescan");
+    rescanButton_.setColour(juce::TextButton::buttonColourId, PanelAlt);
+    rescanButton_.setColour(juce::TextButton::textColourOffId, Text);
+    rescanButton_.onClick = [this] {
+        processor_.refreshHardwareMidiInputs();
+        hardwareLabel_.setText(hardwareStatusText(processor_.activeHardwareInputNames()), juce::dontSendNotification);
+        lastHardwareInputCount_ = processor_.activeHardwareInputCount();
+    };
+    addAndMakeVisible(rescanButton_);
+
+    thruButton_.setButtonText("Map Thru");
+    thruButton_.setColour(juce::ToggleButton::textColourId, Text);
+    addAndMakeVisible(thruButton_);
+    thruAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor_.parameters(),
+        galahad::plugin::MapThruId,
+        thruButton_);
+
+    activityView_ = std::make_unique<ActivityView>();
+    addAndMakeVisible(*activityView_);
+
+    for (int slot = 0; slot < static_cast<int>(rows_.size()); ++slot)
+    {
+        rows_[static_cast<size_t>(slot)] = std::make_unique<MapRow>(*this, processor_, slot);
+        addAndMakeVisible(*rows_[static_cast<size_t>(slot)]);
+    }
+
+    processor_.refreshHardwareMidiInputs();
+    hardwareLabel_.setText(hardwareStatusText(processor_.activeHardwareInputNames()), juce::dontSendNotification);
+    lastHardwareInputCount_ = processor_.activeHardwareInputCount();
+    lastHardwareCaptureState_ = hardwareCaptureButton_.getToggleState();
+
+    startTimerHz(30);
+}
+
+GalahadMidiToolsEditor::~GalahadMidiToolsEditor() = default;
+
+void GalahadMidiToolsEditor::paint(juce::Graphics& graphics)
+{
+    graphics.fillAll(Background);
+
+    auto area = getLocalBounds().reduced(Margin);
+    area.removeFromTop(178);
+
+    graphics.setColour(MutedText);
+    graphics.setFont(12.0f);
+    auto header = area.removeFromTop(22).reduced(12, 0);
+    graphics.drawText("#", takeColumn(header, 34), juce::Justification::centred);
+    graphics.drawText("State", takeColumn(header, 54), juce::Justification::centredLeft);
+    graphics.drawText("Learn", takeColumn(header, 70), juce::Justification::centredLeft);
+    graphics.drawText("Input", takeColumn(header, 88), juce::Justification::centredLeft);
+    graphics.drawText("CC", takeColumn(header, 94), juce::Justification::centredLeft);
+    graphics.drawText("Output", takeColumn(header, 88), juce::Justification::centredLeft);
+    graphics.drawText("CC", takeColumn(header, 94), juce::Justification::centredLeft);
+    graphics.drawText("Min", takeColumn(header, 94), juce::Justification::centredLeft);
+    graphics.drawText("Max", takeColumn(header, 94), juce::Justification::centredLeft);
+}
+
+void GalahadMidiToolsEditor::resized()
+{
+    auto area = getLocalBounds().reduced(Margin);
+    auto top = area.removeFromTop(48);
+    titleLabel_.setBounds(top.removeFromLeft(260));
+    versionLabel_.setBounds(top.removeFromLeft(220));
+    rescanButton_.setBounds(top.removeFromRight(86).reduced(0, 7));
+    hardwareCaptureButton_.setBounds(top.removeFromRight(118).reduced(0, 7));
+    thruButton_.setBounds(top.removeFromRight(118).reduced(0, 7));
+
+    hardwareLabel_.setBounds(area.removeFromTop(22));
+    area.removeFromTop(8);
+    activityView_->setBounds(area.removeFromTop(86));
+    area.removeFromTop(12);
+    area.removeFromTop(22);
+
+    for (auto& row : rows_)
+    {
+        row->setBounds(area.removeFromTop(RowHeight));
+        area.removeFromTop(8);
+    }
+}
+
+void GalahadMidiToolsEditor::timerCallback()
+{
+    const bool captureState = hardwareCaptureButton_.getToggleState();
+    if (captureState != lastHardwareCaptureState_)
+    {
+        lastHardwareCaptureState_ = captureState;
+        processor_.refreshHardwareMidiInputs();
+        hardwareLabel_.setText(hardwareStatusText(processor_.activeHardwareInputNames()), juce::dontSendNotification);
+        lastHardwareInputCount_ = processor_.activeHardwareInputCount();
+    }
+
+    const int hardwareInputCount = processor_.activeHardwareInputCount();
+    if (hardwareInputCount != lastHardwareInputCount_)
+    {
+        lastHardwareInputCount_ = hardwareInputCount;
+        hardwareLabel_.setText(hardwareStatusText(processor_.activeHardwareInputNames()), juce::dontSendNotification);
+    }
+
+    const auto input = processor_.lastControllerInput();
+    if (input.serial != lastInputSerial_)
+    {
+        lastInputSerial_ = input.serial;
+        activityView_->setInput(input);
+    }
+
+    const auto output = processor_.lastControllerOutput();
+    if (output.serial != lastOutputSerial_)
+    {
+        lastOutputSerial_ = output.serial;
+        activityView_->setOutput(output);
+        if (output.slot >= 0 && output.slot < static_cast<int>(rows_.size()))
+            rows_[static_cast<size_t>(output.slot)]->pulse(output.value);
+    }
+
+    if (learningSlot_ >= 0 && input.serial != learnStartSerial_ && input.controller >= 0)
+        finishLearn(input);
+
+    activityView_->decay();
+    for (auto& row : rows_)
+        row->decay();
+}
+
+void GalahadMidiToolsEditor::beginLearn(int slot)
+{
+    if (learningSlot_ == slot)
+        learningSlot_ = -1;
+    else
+    {
+        learningSlot_ = slot;
+        learnStartSerial_ = processor_.lastControllerInput().serial;
+    }
+
+    refreshLearningState();
+}
+
+void GalahadMidiToolsEditor::finishLearn(const GalahadMidiToolsProcessor::ControllerSnapshot& snapshot)
+{
+    if (learningSlot_ >= 0 && learningSlot_ < static_cast<int>(rows_.size()))
+        rows_[static_cast<size_t>(learningSlot_)]->learnFrom(snapshot);
+
+    learningSlot_ = -1;
+    refreshLearningState();
+}
+
+void GalahadMidiToolsEditor::refreshLearningState()
+{
+    for (int slot = 0; slot < static_cast<int>(rows_.size()); ++slot)
+        rows_[static_cast<size_t>(slot)]->setLearning(slot == learningSlot_);
+}

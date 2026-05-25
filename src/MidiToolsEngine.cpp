@@ -55,6 +55,7 @@ void MidiToolsEngine::applySequencerConfig(const SequencerModuleConfig& config) 
 {
     SequencerConfig sequencerConfig;
     sequencerConfig.channel = std::clamp<uint8_t>(config.channel, 1, 16);
+    sequencerConfig.channelMode = config.channelMode;
     sequencerConfig.rootNote = clampMidi(config.rootNote);
     sequencerConfig.steps = std::clamp<uint8_t>(config.steps, 1, static_cast<uint8_t>(AlgorithmicSequencer::MaxSteps));
     sequencerConfig.rateDivisor = std::max(0.25, config.rateDivisor);
