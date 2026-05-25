@@ -1,5 +1,8 @@
 #pragma once
 
+#include "galahad/AlgorithmicSequencer.h"
+#include "galahad/MidiLfo.h"
+#include "galahad/MidiRouting.h"
 #include "galahad/SpscQueue.h"
 #include "galahad/juce/MidiProtocol.h"
 
@@ -41,7 +44,16 @@ public:
     int launchSerial() const noexcept { return launchSerial_.load(std::memory_order_relaxed); }
 
 private:
+    static constexpr size_t MaxBlockEvents = 512;
+
+    static galahad::MidiEvent fromJuceMidi(const juce::MidiMessage& message, int sampleOffset) noexcept;
+    static juce::MidiMessage toJuceMidi(const galahad::MidiEvent& event);
+
+    galahad::AlgorithmicSequencer sequencer_;
+    galahad::MidiLfo lfo_;
+    galahad::MidiMergerRouter router_;
     galahad::SpscQueue<galahad::midi::SessionCell, 256> launchedCells_;
+    double sampleRate_{ 44100.0 };
     std::atomic<int> lastTrack_{ -1 };
     std::atomic<int> lastScene_{ -1 };
     std::atomic<int> launchSerial_{ 0 };

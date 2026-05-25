@@ -45,6 +45,9 @@ session-grid workflow:
 See `docs/MIDI_TOOLS.md` for the note map, transport CCs, and Ableton Remote
 Script setup.
 
+The MIDI tools scaffold now includes a reusable algorithmic sequencer, MIDI CC
+LFOs, and merge/reroute primitives that can run inside the JUCE MIDI plugin.
+
 ## Ableton integration options
 
 1. AbletonOSC-compatible script in Live:

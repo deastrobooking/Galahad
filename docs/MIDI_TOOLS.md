@@ -81,3 +81,32 @@ Recommended Windows install path:
 
 The older app-bundle path also works for local testing, but the User Library path
 survives Live upgrades more cleanly.
+
+## Algorithmic Engine
+
+The first engine scaffold lives in the JUCE MIDI Tools processor and reusable
+core headers:
+
+- `AlgorithmicSequencer`: fixed-size step sequencer with Euclidean pattern fill,
+  per-step probability, transpose, velocity, and gate.
+- `MidiLfo`: MIDI CC LFO with sine, triangle, saw, square, and sample-hold
+  shapes.
+- `MidiMergerRouter`: deterministic event merge plus simple channel remap,
+  transpose, velocity offset, and note/CC filtering rules.
+
+Current plugin defaults:
+
+```text
+Sequencer: 16 steps, 5 Euclidean pulses, root note 48, channel 1
+LFO:       CC 74, channel 1, triangle, 0.2 Hz, range 24..104
+Routing:   pass input through to channel 1
+```
+
+The next layer should expose these as plugin parameters and Remote Script
+controls:
+
+```text
+sequencer run, root, rate, pulses, rotation, probability
+LFO target CC, shape, rate, min, max
+route input channel, output channel, transpose, velocity offset, filters
+```

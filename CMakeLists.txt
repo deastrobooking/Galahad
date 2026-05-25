@@ -7,6 +7,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(galahad_core
+    src/AlgorithmicSequencer.cpp
+    src/MidiLfo.cpp
+    src/MidiRouting.cpp
     src/OscCodec.cpp
     src/OscUdpTransport.cpp
     src/LiveController.cpp
