@@ -82,10 +82,10 @@ Recommended Windows install path:
 The older app-bundle path also works for local testing, but the User Library path
 survives Live upgrades more cleanly.
 
-## Algorithmic Engine
+## Modular Engine
 
-The first engine scaffold lives in the JUCE MIDI Tools processor and reusable
-core headers:
+The reusable engine lives in `MidiToolsEngine` and is used by the JUCE MIDI
+Tools processor:
 
 - `AlgorithmicSequencer`: fixed-size step sequencer with Euclidean pattern fill,
   per-step probability, transpose, velocity, and gate.
@@ -93,6 +93,8 @@ core headers:
   shapes.
 - `MidiMergerRouter`: deterministic event merge plus simple channel remap,
   transpose, velocity offset, and note/CC filtering rules.
+- `MidiToolsEngine`: combines the modules into one process call for plugins,
+  command-line tools, or future bridge adapters.
 
 Current plugin defaults:
 
@@ -102,11 +104,60 @@ LFO:       CC 74, channel 1, triangle, 0.2 Hz, range 24..104
 Routing:   pass input through to channel 1
 ```
 
-The next layer should expose these as plugin parameters and Remote Script
-controls:
+## Plugin Parameters
+
+The VST3/Standalone target exposes the modular engine as automatable plugin
+parameters. Ableton can map these directly, and the existing selected-device
+Remote Script controls can edit them when `Galahad MIDI Tools` is the selected
+device.
+
+First device bank:
 
 ```text
-sequencer run, root, rate, pulses, rotation, probability
-LFO target CC, shape, rate, min, max
-route input channel, output channel, transpose, velocity offset, filters
+Sequencer Run
+Sequencer Root
+Sequencer Rate
+Sequencer Steps
+Sequencer Pulses
+Sequencer Rotation
+Sequencer Probability
+Sequencer Gate
 ```
+
+Second device bank:
+
+```text
+Sequencer Velocity
+LFO Enabled
+LFO Target CC
+LFO Shape
+LFO Rate
+LFO Minimum
+LFO Maximum
+Route Enabled
+```
+
+Third device bank:
+
+```text
+Route Input Channel
+Route Output Channel
+Route Transpose
+Route Velocity
+Route Notes
+Route CCs
+```
+
+`Sequencer Rate` is in steps per beat. The default value `4.0` means sixteenth
+notes at the host tempo. `Route Input Channel` accepts `0` for omni.
+
+## Ableton Control Workflow
+
+1. Put the plugin on a MIDI track before the instrument or before a MIDI output
+   routed to the Remote Script.
+2. Select `Galahad MIDI Tools` in Live's device view.
+3. Use the Galahad Remote Script selected-device bank controls (`CC 100-107`,
+   `CC 108`, `CC 109`) to edit the plugin's parameter banks.
+4. Route the plugin MIDI output to Live, a hardware synth, or the Galahad Remote
+   Script lane depending on whether you want generated notes, generated CCs, or
+   session-control feedback.

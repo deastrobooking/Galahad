@@ -8,6 +8,12 @@
 
 namespace galahad
 {
+#if defined(__cpp_lib_hardware_interference_size)
+inline constexpr size_t HardwareDestructiveInterferenceSize = std::hardware_destructive_interference_size;
+#else
+inline constexpr size_t HardwareDestructiveInterferenceSize = 64;
+#endif
+
 template <typename T, size_t Capacity>
 class SpscQueue
 {
@@ -56,7 +62,7 @@ public:
     }
 
 private:
-    static constexpr size_t CacheLineSize = std::hardware_destructive_interference_size;
+    static constexpr size_t CacheLineSize = HardwareDestructiveInterferenceSize;
 
     struct alignas(CacheLineSize) CacheSeparatedIndex
     {

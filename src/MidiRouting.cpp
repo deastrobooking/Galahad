@@ -43,8 +43,17 @@ size_t MidiMergerRouter::route(std::span<const MidiEvent> input, std::span<MidiE
     for (const auto& event : input)
     {
         bool emitted = false;
+        bool handled = false;
         for (const auto& nextRule : rules_)
         {
+            if (!nextRule.enabled)
+                continue;
+
+            if (nextRule.inputChannel != 0 && nextRule.inputChannel != event.channel)
+                continue;
+
+            handled = true;
+
             if (!ruleMatches(nextRule, event))
                 continue;
 
@@ -55,7 +64,7 @@ size_t MidiMergerRouter::route(std::span<const MidiEvent> input, std::span<MidiE
             emitted = true;
         }
 
-        if (!emitted && count < output.size())
+        if (!emitted && !handled && count < output.size())
             output[count++] = event;
     }
 

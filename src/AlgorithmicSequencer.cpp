@@ -86,7 +86,7 @@ void AlgorithmicSequencer::reset() noexcept
 
 size_t AlgorithmicSequencer::process(double bpm, int sampleRate, int numSamples, std::span<MidiEvent> output) noexcept
 {
-    if (!config_.running || output.empty() || numSamples <= 0)
+    if (output.empty() || numSamples <= 0)
         return 0;
 
     const int stepSamples = samplesPerStep(bpm, sampleRate, config_.rateDivisor);
@@ -105,6 +105,9 @@ size_t AlgorithmicSequencer::process(double bpm, int sampleRate, int numSamples,
             pendingNoteOffSamples_ -= numSamples;
         }
     }
+
+    if (!config_.running)
+        return count;
 
     while (cursor < numSamples && count < output.size())
     {

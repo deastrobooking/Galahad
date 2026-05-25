@@ -1,42 +1,93 @@
 #include "GalahadMidiToolsProcessor.h"
 
 #include <array>
+#include <cmath>
+#include <memory>
+#include <vector>
+
+namespace
+{
+constexpr const char* SeqRunId = "seqRun";
+constexpr const char* SeqRootId = "seqRoot";
+constexpr const char* SeqRateId = "seqRate";
+constexpr const char* SeqStepsId = "seqSteps";
+constexpr const char* SeqPulsesId = "seqPulses";
+constexpr const char* SeqRotationId = "seqRotation";
+constexpr const char* SeqProbabilityId = "seqProbability";
+constexpr const char* SeqGateId = "seqGate";
+constexpr const char* SeqVelocityId = "seqVelocity";
+
+constexpr const char* LfoEnabledId = "lfoEnabled";
+constexpr const char* LfoCcId = "lfoCc";
+constexpr const char* LfoShapeId = "lfoShape";
+constexpr const char* LfoRateId = "lfoRate";
+constexpr const char* LfoMinimumId = "lfoMinimum";
+constexpr const char* LfoMaximumId = "lfoMaximum";
+
+constexpr const char* RouteEnabledId = "routeEnabled";
+constexpr const char* RouteInputChannelId = "routeInputChannel";
+constexpr const char* RouteOutputChannelId = "routeOutputChannel";
+constexpr const char* RouteTransposeId = "routeTranspose";
+constexpr const char* RouteVelocityId = "routeVelocity";
+constexpr const char* RouteNotesId = "routeNotes";
+constexpr const char* RouteCcsId = "routeCcs";
+
+float valueOf(const juce::AudioProcessorValueTreeState& state, const char* id) noexcept
+{
+    if (const auto* value = state.getRawParameterValue(id))
+        return value->load(std::memory_order_relaxed);
+
+    return 0.0f;
+}
+
+uint8_t midiValueOf(const juce::AudioProcessorValueTreeState& state, const char* id) noexcept
+{
+    return static_cast<uint8_t>(juce::jlimit(0, 127, static_cast<int>(std::lround(valueOf(state, id)))));
+}
+
+uint8_t channelValueOf(const juce::AudioProcessorValueTreeState& state, const char* id) noexcept
+{
+    return static_cast<uint8_t>(juce::jlimit(1, 16, static_cast<int>(std::lround(valueOf(state, id)))));
+}
+
+bool boolValueOf(const juce::AudioProcessorValueTreeState& state, const char* id) noexcept
+{
+    return valueOf(state, id) >= 0.5f;
+}
+
+galahad::LfoShape lfoShapeFromIndex(int index) noexcept
+{
+    switch (index)
+    {
+        case 1:
+            return galahad::LfoShape::Triangle;
+        case 2:
+            return galahad::LfoShape::SawUp;
+        case 3:
+            return galahad::LfoShape::SawDown;
+        case 4:
+            return galahad::LfoShape::Square;
+        case 5:
+            return galahad::LfoShape::RandomSampleHold;
+        case 0:
+        default:
+            return galahad::LfoShape::Sine;
+    }
+}
+} // namespace
 
 GalahadMidiToolsProcessor::GalahadMidiToolsProcessor()
-    : juce::AudioProcessor(BusesProperties())
+    : juce::AudioProcessor(BusesProperties()),
+      parameters_(*this, nullptr, "GalahadMidiTools", createParameterLayout())
 {
-    galahad::SequencerConfig seqConfig;
-    seqConfig.channel = 1;
-    seqConfig.rootNote = 48;
-    seqConfig.steps = 16;
-    seqConfig.rateDivisor = 4.0;
-    seqConfig.running = true;
-    sequencer_.setConfig(seqConfig);
-    sequencer_.setEuclideanPattern(5, 16, 0, seqConfig.rootNote);
-
-    galahad::MidiLfoConfig lfoConfig;
-    lfoConfig.channel = 1;
-    lfoConfig.controller = 74;
-    lfoConfig.minimum = 24;
-    lfoConfig.maximum = 104;
-    lfoConfig.rateHz = 0.2;
-    lfoConfig.shape = galahad::LfoShape::Triangle;
-    lfo_.setConfig(lfoConfig);
-
-    router_.clearRules();
-    galahad::MidiRouteRule passThrough;
-    passThrough.enabled = true;
-    passThrough.inputChannel = 0;
-    passThrough.outputChannel = 1;
-    router_.setRule(0, passThrough);
+    updateEngineConfig(120.0);
 }
 
 void GalahadMidiToolsProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     juce::ignoreUnused(samplesPerBlock);
     sampleRate_ = sampleRate;
-    sequencer_.reset();
-    lfo_.reset();
+    engine_.reset();
     launchedCells_.reset();
 }
 
@@ -56,11 +107,18 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     buffer.clear();
 
     std::array<galahad::MidiEvent, MaxBlockEvents> incoming{};
-    std::array<galahad::MidiEvent, MaxBlockEvents> routed{};
-    std::array<galahad::MidiEvent, MaxBlockEvents> generated{};
-    std::array<galahad::MidiEvent, MaxBlockEvents> lfoEvents{};
-    std::array<galahad::MidiEvent, MaxBlockEvents> mergedA{};
-    std::array<galahad::MidiEvent, MaxBlockEvents> mergedB{};
+    std::array<galahad::MidiEvent, MaxBlockEvents> processed{};
+
+    double bpm = 120.0;
+    if (auto* playHead = getPlayHead())
+    {
+        if (const auto position = playHead->getPosition())
+        {
+            if (const auto positionBpm = position->getBpm(); positionBpm && *positionBpm > 0.0)
+                bpm = *positionBpm;
+        }
+    }
+    updateEngineConfig(bpm);
 
     size_t incomingCount = 0;
     for (const auto metadata : midiMessages)
@@ -78,30 +136,18 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         }
     }
 
-    const size_t routedCount = router_.route(std::span<const galahad::MidiEvent>(incoming.data(), incomingCount),
-                                             std::span<galahad::MidiEvent>(routed.data(), routed.size()));
-    size_t generatedCount = sequencer_.process(120.0,
-                                               static_cast<int>(sampleRate_),
-                                               buffer.getNumSamples(),
-                                               std::span<galahad::MidiEvent>(generated.data(), generated.size()));
-    const size_t lfoCount = lfo_.process(static_cast<int>(sampleRate_),
-                                         buffer.getNumSamples(),
-                                         std::span<galahad::MidiEvent>(lfoEvents.data(), lfoEvents.size()));
+    size_t processedCount = engine_.process(std::span<const galahad::MidiEvent>(incoming.data(), incomingCount),
+                                            static_cast<int>(sampleRate_),
+                                            buffer.getNumSamples(),
+                                            std::span<galahad::MidiEvent>(processed.data(), processed.size()));
 
     galahad::midi::SessionCell cell;
-    while (generatedCount < generated.size() && launchedCells_.tryPop(cell))
-        generated[generatedCount++] = fromJuceMidi(galahad::midi::MidiProtocol::clipFeedbackNote(cell.track, cell.scene, 127), 0);
-
-    const size_t mergedACount = router_.merge(std::span<const galahad::MidiEvent>(routed.data(), routedCount),
-                                              std::span<const galahad::MidiEvent>(generated.data(), generatedCount),
-                                              std::span<galahad::MidiEvent>(mergedA.data(), mergedA.size()));
-    const size_t mergedBCount = router_.merge(std::span<const galahad::MidiEvent>(mergedA.data(), mergedACount),
-                                              std::span<const galahad::MidiEvent>(lfoEvents.data(), lfoCount),
-                                              std::span<galahad::MidiEvent>(mergedB.data(), mergedB.size()));
+    while (processedCount < processed.size() && launchedCells_.tryPop(cell))
+        processed[processedCount++] = fromJuceMidi(galahad::midi::MidiProtocol::clipFeedbackNote(cell.track, cell.scene, 127), 0);
 
     midiMessages.clear();
-    for (size_t i = 0; i < mergedBCount; ++i)
-        midiMessages.addEvent(toJuceMidi(mergedB[i]), mergedB[i].sampleOffset);
+    for (size_t i = 0; i < processedCount; ++i)
+        midiMessages.addEvent(toJuceMidi(processed[i]), processed[i].sampleOffset);
 }
 
 juce::AudioProcessorEditor* GalahadMidiToolsProcessor::createEditor()
@@ -111,12 +157,114 @@ juce::AudioProcessorEditor* GalahadMidiToolsProcessor::createEditor()
 
 void GalahadMidiToolsProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    destData.reset();
+    if (auto state = parameters_.copyState(); state.isValid())
+    {
+        if (auto xml = state.createXml())
+            copyXmlToBinary(*xml, destData);
+    }
 }
 
 void GalahadMidiToolsProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
-    juce::ignoreUnused(data, sizeInBytes);
+    if (auto xml = getXmlFromBinary(data, sizeInBytes))
+    {
+        if (xml->hasTagName(parameters_.state.getType()))
+            parameters_.replaceState(juce::ValueTree::fromXml(*xml));
+    }
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout GalahadMidiToolsProcessor::createParameterLayout()
+{
+    std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+
+    auto addBool = [&params](const char* id, const juce::String& name, bool defaultValue) {
+        params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID(id, 1), name, defaultValue));
+    };
+
+    auto addInt = [&params](const char* id, const juce::String& name, int minimum, int maximum, int defaultValue) {
+        params.push_back(std::make_unique<juce::AudioParameterInt>(juce::ParameterID(id, 1),
+                                                                   name,
+                                                                   minimum,
+                                                                   maximum,
+                                                                   defaultValue));
+    };
+
+    auto addFloat = [&params](const char* id,
+                              const juce::String& name,
+                              float minimum,
+                              float maximum,
+                              float defaultValue,
+                              float interval = 0.01f) {
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID(id, 1),
+                                                                     name,
+                                                                     juce::NormalisableRange<float>(minimum, maximum, interval),
+                                                                     defaultValue));
+    };
+
+    addBool(SeqRunId, "Sequencer Run", true);
+    addInt(SeqRootId, "Sequencer Root", 0, 127, 48);
+    addFloat(SeqRateId, "Sequencer Rate", 0.25f, 16.0f, 4.0f, 0.25f);
+    addInt(SeqStepsId, "Sequencer Steps", 1, static_cast<int>(galahad::AlgorithmicSequencer::MaxSteps), 16);
+    addInt(SeqPulsesId, "Sequencer Pulses", 0, static_cast<int>(galahad::AlgorithmicSequencer::MaxSteps), 5);
+    addInt(SeqRotationId, "Sequencer Rotation", 0, static_cast<int>(galahad::AlgorithmicSequencer::MaxSteps - 1), 0);
+    addInt(SeqProbabilityId, "Sequencer Probability", 0, 127, 127);
+    addInt(SeqGateId, "Sequencer Gate", 1, 100, 45);
+    addInt(SeqVelocityId, "Sequencer Velocity", 1, 127, 96);
+
+    addBool(LfoEnabledId, "LFO Enabled", true);
+    addInt(LfoCcId, "LFO Target CC", 0, 127, 74);
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID(LfoShapeId, 1),
+                                                                  "LFO Shape",
+                                                                  juce::StringArray{ "Sine", "Triangle", "Saw Up", "Saw Down", "Square", "Sample Hold" },
+                                                                  1));
+    addFloat(LfoRateId, "LFO Rate", 0.01f, 20.0f, 0.2f, 0.01f);
+    addInt(LfoMinimumId, "LFO Minimum", 0, 127, 24);
+    addInt(LfoMaximumId, "LFO Maximum", 0, 127, 104);
+
+    addBool(RouteEnabledId, "Route Enabled", true);
+    addInt(RouteInputChannelId, "Route Input Channel", 0, 16, 0);
+    addInt(RouteOutputChannelId, "Route Output Channel", 1, 16, 1);
+    addInt(RouteTransposeId, "Route Transpose", -48, 48, 0);
+    addInt(RouteVelocityId, "Route Velocity", -127, 127, 0);
+    addBool(RouteNotesId, "Route Notes", true);
+    addBool(RouteCcsId, "Route CCs", true);
+
+    return { params.begin(), params.end() };
+}
+
+void GalahadMidiToolsProcessor::updateEngineConfig(double bpm)
+{
+    galahad::MidiToolsEngineConfig config;
+    config.bpm = bpm;
+
+    config.sequencer.enabled = boolValueOf(parameters_, SeqRunId);
+    config.sequencer.channel = 1;
+    config.sequencer.rootNote = midiValueOf(parameters_, SeqRootId);
+    config.sequencer.rateDivisor = static_cast<double>(valueOf(parameters_, SeqRateId));
+    config.sequencer.steps = static_cast<uint8_t>(juce::jlimit(1, static_cast<int>(galahad::AlgorithmicSequencer::MaxSteps), static_cast<int>(std::lround(valueOf(parameters_, SeqStepsId)))));
+    config.sequencer.pulses = static_cast<uint8_t>(juce::jlimit(0, static_cast<int>(config.sequencer.steps), static_cast<int>(std::lround(valueOf(parameters_, SeqPulsesId)))));
+    config.sequencer.rotation = static_cast<uint8_t>(juce::jlimit(0, static_cast<int>(config.sequencer.steps - 1), static_cast<int>(std::lround(valueOf(parameters_, SeqRotationId)))));
+    config.sequencer.probability = midiValueOf(parameters_, SeqProbabilityId);
+    config.sequencer.gatePercent = static_cast<uint8_t>(juce::jlimit(1, 100, static_cast<int>(std::lround(valueOf(parameters_, SeqGateId)))));
+    config.sequencer.velocity = midiValueOf(parameters_, SeqVelocityId);
+
+    config.lfo.enabled = boolValueOf(parameters_, LfoEnabledId);
+    config.lfo.channel = 1;
+    config.lfo.controller = midiValueOf(parameters_, LfoCcId);
+    config.lfo.shape = lfoShapeFromIndex(static_cast<int>(std::lround(valueOf(parameters_, LfoShapeId))));
+    config.lfo.rateHz = static_cast<double>(valueOf(parameters_, LfoRateId));
+    config.lfo.minimum = midiValueOf(parameters_, LfoMinimumId);
+    config.lfo.maximum = midiValueOf(parameters_, LfoMaximumId);
+
+    config.router.enabled = boolValueOf(parameters_, RouteEnabledId);
+    config.router.inputChannel = static_cast<uint8_t>(juce::jlimit(0, 16, static_cast<int>(std::lround(valueOf(parameters_, RouteInputChannelId)))));
+    config.router.outputChannel = channelValueOf(parameters_, RouteOutputChannelId);
+    config.router.transpose = juce::jlimit(-48, 48, static_cast<int>(std::lround(valueOf(parameters_, RouteTransposeId))));
+    config.router.velocityOffset = juce::jlimit(-127, 127, static_cast<int>(std::lround(valueOf(parameters_, RouteVelocityId))));
+    config.router.passNotes = boolValueOf(parameters_, RouteNotesId);
+    config.router.passControlChanges = boolValueOf(parameters_, RouteCcsId);
+
+    engine_.setConfig(config);
 }
 
 galahad::MidiEvent GalahadMidiToolsProcessor::fromJuceMidi(const juce::MidiMessage& message, int sampleOffset) noexcept

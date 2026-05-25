@@ -36,3 +36,5 @@
 - Add commands to `Command` factories.
 - Add transport implementation by inheriting `ITransport`.
 - Add bridge adapters as separate modules to keep core lightweight.
+- Add MIDI tools by composing `AlgorithmicSequencer`, `MidiLfo`,
+  `MidiMergerRouter`, or the higher-level `MidiToolsEngine`.
