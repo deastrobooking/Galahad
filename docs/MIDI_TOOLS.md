@@ -200,13 +200,26 @@ buttons update that parameter. Surface mappings are evaluated only for the
 hardware input slot that produced the MIDI event, so two controllers can use the
 same CC numbers without colliding once Galahad has opened them directly.
 
-Each surface mapping has:
+Ableton does not need to expose every stored mapping as a separate automatable
+parameter. Instead, use the compact focused editor parameters:
 
 ```text
-On
-Input channel / CC
-Output channel / CC
-Min / Max
+Surface Edit Controller = controller slot 1..8
+Surface Edit Control    = Fader 1..8 or Button 1..15
+Surface Edit Map        = Map 1..4 for that control
+```
+
+Changing the fields below writes them into the selected controller/control/map
+entry:
+
+```text
+Surface Map On
+Surface In Ch
+Surface In CC
+Surface Out Ch
+Surface Out CC
+Surface Min
+Surface Max
 ```
 
 The compact four-row mapper remains available as a legacy/global mapper and

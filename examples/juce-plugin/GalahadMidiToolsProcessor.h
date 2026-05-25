@@ -83,6 +83,45 @@ private:
         std::atomic<float>* maximum{ nullptr };
     };
 
+    struct ControllerSurfaceMap
+    {
+        std::atomic<int> enabled{ 0 };
+        std::atomic<int> inputChannel{ 0 };
+        std::atomic<int> inputCc{ 0 };
+        std::atomic<int> outputChannel{ 0 };
+        std::atomic<int> outputCc{ 0 };
+        std::atomic<int> minimum{ 0 };
+        std::atomic<int> maximum{ 127 };
+    };
+
+    struct SurfaceEditorParameters
+    {
+        std::atomic<float>* controller{ nullptr };
+        std::atomic<float>* control{ nullptr };
+        std::atomic<float>* layer{ nullptr };
+        std::atomic<float>* enabled{ nullptr };
+        std::atomic<float>* inputChannel{ nullptr };
+        std::atomic<float>* inputCc{ nullptr };
+        std::atomic<float>* outputChannel{ nullptr };
+        std::atomic<float>* outputCc{ nullptr };
+        std::atomic<float>* minimum{ nullptr };
+        std::atomic<float>* maximum{ nullptr };
+    };
+
+    struct SurfaceEditorSnapshot
+    {
+        int controller{ 0 };
+        int control{ 0 };
+        int layer{ 0 };
+        int enabled{ 0 };
+        int inputChannel{ 0 };
+        int inputCc{ 0 };
+        int outputChannel{ 0 };
+        int outputCc{ 0 };
+        int minimum{ 0 };
+        int maximum{ 127 };
+    };
+
     struct HardwareMidiInput
     {
         int slot{ 0 };
@@ -99,6 +138,10 @@ private:
     void updateEngineConfig(double bpm);
     void ensureVirtualMidiOutput();
     void cacheControllerMapParameters();
+    void initializeControllerSurfaceMaps() noexcept;
+    void syncSurfaceEditorToSelectedMap() noexcept;
+    juce::ValueTree createControllerSurfaceMapsState() const;
+    void restoreControllerSurfaceMapsState(const juce::ValueTree& state);
     void closeHardwareMidiInputs();
     bool shouldCaptureHardwareInputs() const noexcept;
     static bool isPreferredHardwareInput(const juce::MidiDeviceInfo& device);
@@ -113,7 +156,10 @@ private:
     galahad::MidiToolsEngine engine_;
     juce::AudioProcessorValueTreeState parameters_;
     std::array<ControllerMapParameters, ControllerMapSlotCount> controllerMapParameters_{};
-    std::array<ControllerMapParameters, ControllerSurfaceMapSlotCount> controllerSurfaceMapParameters_{};
+    SurfaceEditorParameters surfaceEditorParameters_{};
+    SurfaceEditorSnapshot lastSurfaceEditorSnapshot_{};
+    bool hasSurfaceEditorSnapshot_{ false };
+    std::array<ControllerSurfaceMap, ControllerSurfaceMapSlotCount> controllerSurfaceMaps_{};
     galahad::SpscQueue<galahad::midi::SessionCell, 256> launchedCells_;
     std::unique_ptr<juce::MidiOutput> virtualMidiOutput_;
     std::vector<HardwareMidiInput> hardwareMidiInputs_;

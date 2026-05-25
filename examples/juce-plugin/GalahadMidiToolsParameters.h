@@ -15,6 +15,16 @@ inline constexpr int ControllerSurfaceMapSlotCount =
 
 inline constexpr const char* HardwareCaptureId = "hardwareCapture";
 inline constexpr const char* ControllerLayerId = "controllerLayer";
+inline constexpr const char* SurfaceEditControllerId = "surfaceEditController";
+inline constexpr const char* SurfaceEditControlId = "surfaceEditControl";
+inline constexpr const char* SurfaceEditLayerId = "surfaceEditLayer";
+inline constexpr const char* SurfaceEditEnabledId = "surfaceEditEnabled";
+inline constexpr const char* SurfaceEditInputChannelId = "surfaceEditInCh";
+inline constexpr const char* SurfaceEditInputCcId = "surfaceEditInCc";
+inline constexpr const char* SurfaceEditOutputChannelId = "surfaceEditOutCh";
+inline constexpr const char* SurfaceEditOutputCcId = "surfaceEditOutCc";
+inline constexpr const char* SurfaceEditMinimumId = "surfaceEditMin";
+inline constexpr const char* SurfaceEditMaximumId = "surfaceEditMax";
 inline constexpr const char* MapThruId = "mapThru";
 inline constexpr const char* MapEnabledSuffix = "Enabled";
 inline constexpr const char* MapInputChannelSuffix = "InCh";
@@ -57,6 +67,30 @@ inline juce::String controllerSurfaceMapParameterId(int controllerSlot, int cont
         + controlPrefix
         + "Map" + juce::String(layer + 1)
         + suffix;
+}
+
+inline juce::StringArray controllerSlotChoices()
+{
+    juce::StringArray choices;
+    for (int slot = 1; slot <= ControllerSlotCount; ++slot)
+        choices.add("Controller " + juce::String(slot));
+    return choices;
+}
+
+inline juce::StringArray controllerLayerChoices()
+{
+    juce::StringArray choices;
+    for (int layer = 1; layer <= ControllerLayerCount; ++layer)
+        choices.add("Map " + juce::String(layer));
+    return choices;
+}
+
+inline juce::StringArray controllerSurfaceControlChoices()
+{
+    juce::StringArray choices;
+    for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+        choices.add(controllerSurfaceControlName(control));
+    return choices;
 }
 
 inline juce::StringArray inputChannelChoices()
