@@ -34,6 +34,17 @@ Standard plugin APIs cannot natively control arbitrary Live tracks, clips, or UI
 3. Run example CLI:
    - `./build/galahad_cli`
 
+## Optional JUCE MIDI tools build
+
+Galahad can also build a small JUCE MIDI tools plugin inspired by the Wolfgang
+session-grid workflow:
+
+- `cmake -S . -B build-juce -DGALAHAD_BUILD_JUCE_MIDI_TOOLS=ON`
+- `cmake --build build-juce --target GalahadMidiTools_VST3`
+
+See `docs/MIDI_TOOLS.md` for the note map, transport CCs, and Ableton Remote
+Script setup.
+
 ## Ableton integration options
 
 1. AbletonOSC-compatible script in Live:

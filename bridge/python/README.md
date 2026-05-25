@@ -16,3 +16,16 @@ To control Ableton Live internals, run a compatible Ableton-side endpoint:
 - a custom MIDI Remote Script exposing bridge routes
 
 Then point Galahad transport to that endpoint.
+
+## MIDI tools Remote Script
+
+`GalahadMidiToolsRemoteScript` is an Ableton MIDI Remote Script skeleton for the
+optional JUCE MIDI tools plugin.
+
+- note 36 maps to track 0, scene 0
+- the grid is 8 tracks by 8 scenes
+- CC 110 controls stop/play/record toggle
+- CC 111 and CC 112 bank tracks/scenes
+
+Copy the `GalahadMidiToolsRemoteScript` folder into Live's MIDI Remote Scripts
+directory, restart Live, then select it in Live's MIDI preferences.
