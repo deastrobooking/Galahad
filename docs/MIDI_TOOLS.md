@@ -106,44 +106,46 @@ Routing:   pass input through to channel 1
 
 ## Plugin Parameters
 
-The VST3/Standalone target exposes the modular engine as automatable plugin
-parameters. Ableton can map these directly, and the existing selected-device
-Remote Script controls can edit them when `Galahad MIDI Tools` is the selected
-device.
+The VST3/Standalone target is a silent MIDI-source instrument. It exposes the
+modular engine as automatable plugin parameters. Ableton can map these directly,
+and the existing selected-device Remote Script controls can edit them when
+`Galahad MIDI Tools` is the selected device.
 
 First device bank:
 
 ```text
-Sequencer Run
-Sequencer Root
-Sequencer Rate
-Sequencer Steps
-Sequencer Pulses
-Sequencer Rotation
-Sequencer Probability
-Sequencer Gate
+Seq Run
+Seq Ch
+Seq Root
+Seq Rate
+Seq Steps
+Seq Pulses
+Seq Rotate
+Seq Prob
 ```
 
 Second device bank:
 
 ```text
-Sequencer Velocity
-LFO Enabled
-LFO Target CC
+Seq Gate
+Seq Vel
+LFO On
+LFO Ch
+LFO CC
 LFO Shape
 LFO Rate
-LFO Minimum
-LFO Maximum
-Route Enabled
+LFO Min
 ```
 
 Third device bank:
 
 ```text
-Route Input Channel
-Route Output Channel
+LFO Max
+Route On
+Route In Ch
+Route Out Ch
 Route Transpose
-Route Velocity
+Route Vel
 Route Notes
 Route CCs
 ```
@@ -153,11 +155,33 @@ notes at the host tempo. `Route Input Channel` accepts `0` for omni.
 
 ## Ableton Control Workflow
 
-1. Put the plugin on a MIDI track before the instrument or before a MIDI output
-   routed to the Remote Script.
-2. Select `Galahad MIDI Tools` in Live's device view.
-3. Use the Galahad Remote Script selected-device bank controls (`CC 100-107`,
+Galahad supports two Wolfgang-style MIDI output routes.
+
+### Host Track Output
+
+1. Put the plugin on MIDI Track 1 as a VST3 instrument/source.
+2. Create MIDI Track 2 for capture or monitoring.
+3. On Track 2, set `MIDI From` to Track 1, then choose `Post FX` or
+   `Galahad MIDI Tools` if Live exposes the device by name.
+4. Arm Track 2 or set monitoring to `In`.
+
+### Native Virtual Output
+
+The plugin also creates a native virtual MIDI source named:
+
+```text
+Galahad 1
+```
+
+To record from it, create a MIDI track and set `MIDI From` to `Galahad 1`.
+The port is created when the plugin is loaded and processing, so reopen Live's
+MIDI chooser or restart Live if it does not appear immediately.
+
+## Remote Control Workflow
+
+1. Select `Galahad MIDI Tools` in Live's device view.
+2. Use the Galahad Remote Script selected-device bank controls (`CC 100-107`,
    `CC 108`, `CC 109`) to edit the plugin's parameter banks.
-4. Route the plugin MIDI output to Live, a hardware synth, or the Galahad Remote
+3. Route the plugin MIDI output to Live, a hardware synth, or the Galahad Remote
    Script lane depending on whether you want generated notes, generated CCs, or
    session-control feedback.

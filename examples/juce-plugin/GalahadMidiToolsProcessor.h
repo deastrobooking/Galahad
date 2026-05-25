@@ -4,9 +4,11 @@
 #include "galahad/SpscQueue.h"
 #include "galahad/juce/MidiProtocol.h"
 
+#include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <atomic>
+#include <memory>
 
 class GalahadMidiToolsProcessor final : public juce::AudioProcessor
 {
@@ -25,7 +27,7 @@ public:
     const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
-    bool isMidiEffect() const override { return true; }
+    bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
 
     int getNumPrograms() override { return 1; }
@@ -50,10 +52,12 @@ private:
     static juce::MidiMessage toJuceMidi(const galahad::MidiEvent& event);
 
     void updateEngineConfig(double bpm);
+    void ensureVirtualMidiOutput();
 
     galahad::MidiToolsEngine engine_;
     juce::AudioProcessorValueTreeState parameters_;
     galahad::SpscQueue<galahad::midi::SessionCell, 256> launchedCells_;
+    std::unique_ptr<juce::MidiOutput> virtualMidiOutput_;
     double sampleRate_{ 44100.0 };
     std::atomic<int> lastTrack_{ -1 };
     std::atomic<int> lastScene_{ -1 };

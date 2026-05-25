@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Galahad VERSION 0.1.0 LANGUAGES C CXX)
+project(Galahad VERSION 0.1.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -72,16 +72,16 @@ if(GALAHAD_BUILD_JUCE_MIDI_TOOLS)
         PLUGIN_MANUFACTURER_CODE    GLHD
         PLUGIN_CODE                 GLM1
         FORMATS                     Standalone VST3
-        IS_SYNTH                    FALSE
+        IS_SYNTH                    TRUE
         NEEDS_MIDI_INPUT            TRUE
         NEEDS_MIDI_OUTPUT           TRUE
-        IS_MIDI_EFFECT              TRUE
+        IS_MIDI_EFFECT              FALSE
         EDITOR_WANTS_KEYBOARD_FOCUS FALSE
         COPY_PLUGIN_AFTER_BUILD     ${GALAHAD_COPY_PLUGIN_AFTER_BUILD}
         VST3_COPY_DIR               "${GALAHAD_MACOS_PLUGIN_COPY_ROOT}/VST3"
         PRODUCT_NAME                "Galahad MIDI Tools"
-        DESCRIPTION                 "MIDI session-grid tools for Ableton bridge development"
-        VST3_CATEGORIES             "Tools"
+        DESCRIPTION                 "Silent MIDI source and session-grid tools for Ableton bridge development"
+        VST3_CATEGORIES             "Synth|Tools"
     )
 
     juce_generate_juce_header(GalahadMidiTools)
@@ -96,6 +96,7 @@ if(GALAHAD_BUILD_JUCE_MIDI_TOOLS)
         PRIVATE
             galahad_core
             galahad_juce_midi
+            juce::juce_audio_devices
             juce::juce_audio_plugin_client
             juce::juce_audio_processors
         PUBLIC
