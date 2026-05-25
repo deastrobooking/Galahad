@@ -31,6 +31,8 @@ SCENE_LAUNCH_CC = 115
 DEVICE_TOGGLE_CC = 116
 PLAY_FEEDBACK_CC = 117
 TRACK_STOP_CC = 118
+CLIP_SECTION_CC = 119
+CLIP_SECTIONS = 4
 
 SYSEX_HEADER = (0xF0, 0x7D, 0x47, 0x48)
 SYSEX_REFRESH_LEGACY = 0x01
@@ -82,6 +84,8 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
         self._device_bank_offset = 0
         self._last_feedback = {}
         self._listeners = []
+        self._last_launched_cell = None
+        self._clip_section_ranges = {}
 
         with self.component_guard():
             self.log_message("GalahadMidiToolsRemoteScript protocol v1 loaded")
@@ -122,6 +126,7 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
             return
 
         slot.fire()
+        self._last_launched_cell = (track, scene)
         self._refresh_clip_feedback(track, scene)
 
     def _handle_cc(self, channel, cc, value):
@@ -129,6 +134,9 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
 
         if cc == TRANSPORT_CC:
             self._handle_transport(value)
+            return
+        if cc == RECORD_FEEDBACK_CC:
+            self._set_record_mode(value >= 64)
             return
         if cc == TRACK_BANK_CC:
             self._move_track_bank(-SESSION_TRACKS if value < 64 else SESSION_TRACKS)
@@ -141,6 +149,9 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
             return
         if cc == TRACK_STOP_CC and value < SESSION_TRACKS:
             self._stop_track_clips(value)
+            return
+        if cc == CLIP_SECTION_CC:
+            self._set_clip_section(value)
             return
         if cc == DEVICE_BANK_LEFT_CC and value > 0:
             self._move_device_bank(-1)
@@ -197,6 +208,95 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
         elif value == 5:
             song.metronome = not song.metronome
         self._refresh_transport_feedback()
+
+    def _set_record_mode(self, enabled):
+        song = self.song()
+        if song.record_mode != enabled:
+            song.record_mode = enabled
+        self._refresh_transport_feedback()
+
+    def _set_clip_section(self, value):
+        section = clamp(int(value), 0, CLIP_SECTIONS - 1)
+        clip = self._automation_section_clip()
+        if clip is None:
+            return
+
+        bounds = self._clip_section_bounds(clip)
+        if bounds is None:
+            return
+
+        start, end = bounds
+        length = end - start
+        if length <= 0.0:
+            return
+
+        section_start = start + (length * float(section) / float(CLIP_SECTIONS))
+        self._set_clip_start(clip, section_start)
+
+    def _automation_section_clip(self):
+        if self._last_launched_cell is not None:
+            slot = self._clip_slot_at(self._last_launched_cell[0], self._last_launched_cell[1])
+            clip = self._clip_from_slot(slot)
+            if clip is not None:
+                return clip
+
+        slot = self._safe_get(self.song().view, "highlighted_clip_slot", None)
+        clip = self._clip_from_slot(slot)
+        if clip is not None:
+            return clip
+
+        return self._safe_get(self.song().view, "detail_clip", None)
+
+    def _clip_from_slot(self, slot):
+        if slot is None or not self._safe_get(slot, "has_clip", False):
+            return None
+        return self._safe_get(slot, "clip", None)
+
+    def _clip_section_bounds(self, clip):
+        key = id(clip)
+        if key in self._clip_section_ranges:
+            return self._clip_section_ranges[key]
+
+        start = self._safe_get(clip, "start_marker", None)
+        if start is None:
+            start = self._safe_get(clip, "loop_start", 0.0)
+
+        end = self._safe_get(clip, "end_marker", None)
+        if end is None:
+            end = self._safe_get(clip, "loop_end", 0.0)
+
+        start = float(start)
+        end = float(end)
+        if end <= start:
+            return None
+
+        bounds = (start, end)
+        self._clip_section_ranges[key] = bounds
+        return bounds
+
+    def _set_clip_start(self, clip, section_start):
+        try:
+            clip.start_marker = section_start
+        except Exception:
+            pass
+
+        scrub = self._safe_get(clip, "scrub", None)
+        if self._safe_get(clip, "is_playing", False) and callable(scrub):
+            try:
+                scrub(section_start)
+                stop_scrub = self._safe_get(clip, "stop_scrub", None)
+                if callable(stop_scrub):
+                    stop_scrub()
+            except Exception:
+                pass
+
+    def _safe_get(self, target, name, default=None):
+        if target is None:
+            return default
+        try:
+            return getattr(target, name, default)
+        except Exception:
+            return default
 
     def _track_at(self, bank_track):
         track_index = self._track_offset + bank_track

@@ -108,6 +108,64 @@ void setChoiceParameter(juce::AudioProcessorValueTreeState& parameters, const ch
     if (auto* parameter = parameters.getParameter(id))
         parameter->setValueNotifyingHost(parameter->convertTo0to1(static_cast<float>(index)));
 }
+
+class HelpPage final : public juce::Component
+{
+public:
+    HelpPage()
+    {
+        instructions_.setMultiLine(true);
+        instructions_.setReadOnly(true);
+        instructions_.setScrollbarsShown(true);
+        instructions_.setCaretVisible(false);
+        instructions_.setPopupMenuEnabled(false);
+        instructions_.setText(helpText(), false);
+        instructions_.setColour(juce::TextEditor::backgroundColourId, Panel);
+        instructions_.setColour(juce::TextEditor::outlineColourId, Border);
+        instructions_.setColour(juce::TextEditor::focusedOutlineColourId, AccentTwo);
+        instructions_.setColour(juce::TextEditor::textColourId, Text);
+        addAndMakeVisible(instructions_);
+        setSize(560, 620);
+    }
+
+    void paint(juce::Graphics& graphics) override
+    {
+        graphics.fillAll(Background);
+        auto area = getLocalBounds().reduced(16);
+        graphics.setColour(AccentTwo);
+        graphics.setFont(juce::FontOptions(18.0f, juce::Font::bold));
+        graphics.drawText("Ableton Setup", area.removeFromTop(28), juce::Justification::centredLeft);
+        graphics.setColour(MutedText);
+        graphics.setFont(juce::FontOptions(13.0f));
+        graphics.drawText("Galahad MIDI Tools quick start", area.removeFromTop(22), juce::Justification::centredLeft);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(16);
+        area.removeFromTop(58);
+        instructions_.setBounds(area);
+    }
+
+private:
+    static juce::String helpText()
+    {
+        return
+            "1. Restart Ableton Live after installing or updating Galahad.\n\n"
+            "2. Open Live Preferences > Link, Tempo & MIDI.\n\n"
+            "3. In Control Surface, choose GalahadMidiToolsRemoteScript. Set Input and Output to the Galahad MIDI ports you want Live to use.\n\n"
+            "4. Add Galahad MIDI Tools to a MIDI track. Keep the plugin before the instrument or routing target that should receive mapped MIDI.\n\n"
+            "5. In the plugin, use MIDI Inputs to assign hardware devices to Controller 1..8. Use Rescan after plugging in a controller.\n\n"
+            "6. Select a controller, channel, and C1..C4 section. Press Learn on a row, move a hardware control, then choose Map 1..4 for alternate layer mappings.\n\n"
+            "7. Automate Controller Pattern from a Live clip to jump between C1..C4 automation sections. Galahad sends CC 119 values 0..3 to the Remote Script.\n\n"
+            "8. Use Auto Rec when a clip envelope should turn Live record mode on or off. Galahad sends CC 113 value 127 for on and 0 for off.\n\n"
+            "9. Use Map Thru only when you want the original controller CC to pass through along with the mapped output.\n\n"
+            "10. If Live does not show the Remote Script, confirm this folder exists, then restart Live:\n"
+            "~/Music/Ableton/User Library/Remote Scripts/GalahadMidiToolsRemoteScript/";
+    }
+
+    juce::TextEditor instructions_;
+};
 } // namespace
 
 class GalahadMidiToolsEditor::CircleButton final : public juce::Button
@@ -858,6 +916,20 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
         galahad::plugin::HardwareCaptureId,
         hardwareCaptureButton_);
 
+    automationRecordButton_.setButtonText("Auto Rec");
+    automationRecordButton_.setColour(juce::ToggleButton::textColourId, Text);
+    automationRecordButton_.setColour(juce::ToggleButton::tickColourId, AccentTwo);
+    addAndMakeVisible(automationRecordButton_);
+    automationRecordAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor_.parameters(),
+        galahad::plugin::AutomationRecordId,
+        automationRecordButton_);
+
+    helpButton_.setButtonText("Help");
+    configurePanelButton(helpButton_, AccentTwo);
+    helpButton_.onClick = [this] { showHelpPopup(); };
+    addAndMakeVisible(helpButton_);
+
     rescanButton_.setButtonText("Rescan");
     rescanButton_.setColour(juce::TextButton::buttonColourId, PanelAlt);
     rescanButton_.setColour(juce::TextButton::textColourOffId, Text);
@@ -945,6 +1017,21 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
 
 GalahadMidiToolsEditor::~GalahadMidiToolsEditor() = default;
 
+void GalahadMidiToolsEditor::showHelpPopup()
+{
+    if (helpCallout_ != nullptr)
+    {
+        helpCallout_->dismiss();
+        helpCallout_ = nullptr;
+        return;
+    }
+
+    auto& callout = juce::CallOutBox::launchAsynchronously(std::make_unique<HelpPage>(),
+                                                           helpButton_.getScreenBounds(),
+                                                           this);
+    helpCallout_ = &callout;
+}
+
 void GalahadMidiToolsEditor::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(Background);
@@ -1003,8 +1090,10 @@ void GalahadMidiToolsEditor::resized()
     auto top = area.removeFromTop(48);
     titleLabel_.setBounds(top.removeFromLeft(260));
     versionLabel_.setBounds(top.removeFromLeft(220));
+    helpButton_.setBounds(top.removeFromRight(74).reduced(0, 7));
     rescanButton_.setBounds(top.removeFromRight(86).reduced(0, 7));
     hardwareCaptureButton_.setBounds(top.removeFromRight(118).reduced(0, 7));
+    automationRecordButton_.setBounds(top.removeFromRight(118).reduced(0, 7));
     thruButton_.setBounds(top.removeFromRight(118).reduced(0, 7));
 
     hardwareLabel_.setBounds(area.removeFromTop(22));

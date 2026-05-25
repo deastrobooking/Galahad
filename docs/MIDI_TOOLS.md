@@ -40,6 +40,7 @@ CC 111 = track bank
 CC 112 = scene bank
 CC 115 = launch scene in current bank
 CC 118 = stop track clips in current bank
+CC 119 = select automation clip section C1..C4
 ```
 
 Clip feedback uses note velocity:
@@ -156,6 +157,7 @@ Fourth device bank:
 ```text
 Route CCs
 Hardware Capture
+Automation Record
 Map Thru
 Map 1 On
 Map 1 In Ch
@@ -189,7 +191,9 @@ Controller slots  1..8 visible hardware/controller contexts
 MIDI Inputs       one device selector per controller slot
 Layer buttons     A..D performance mapping contexts
 Target channels   1..16 quick channel focus buttons
-Clip circles      C1..C4 automation clip contexts
+Clip circles      C1..C4 automation clip sections/contexts
+Auto Rec          automatable on/off record signal for clip envelopes
+Help              in-plugin Ableton setup quick start
 ```
 
 The mapper model supports up to 8 captured controller inputs. Each controller
@@ -210,10 +214,13 @@ with the plugin state and are restored on reload; `Rescan` refreshes the device
 list after plugging in or removing controllers.
 
 Surface assignments are saved per controller, pattern, target channel, control,
-and map layer. After a mapped control has produced a CC value, that last value is
-saved with the assignment and recalled when the active pattern/channel/layer
-changes. That keeps four knob or fader positions separate across patterns and
-channel-focused pages instead of sharing one master mapping state.
+and map layer. The four patterns are also the four automation clip sections:
+when C1..C4 changes, Galahad emits CC 119 with value `0..3`, letting the Remote
+Script move the active automation clip start to that quarter of the clip. After a
+mapped control has produced a CC value, that last value is saved with the
+assignment and recalled when the active pattern/channel/layer changes. That keeps
+four knob or fader positions separate across patterns and channel-focused pages
+instead of sharing one master mapping state.
 
 Ableton does not need to expose every stored mapping as a separate automatable
 parameter. Instead, use the compact focused editor parameters:
@@ -222,7 +229,7 @@ parameter. Instead, use the compact focused editor parameters:
 Surface Edit Controller = controller slot 1..8
 Surface Edit Control    = focused profile row, default Fader 1..8 / Button 1..15
 Surface Edit Map        = Map 1..4 for that control
-Controller Pattern      = clip context C1..C4
+Controller Pattern      = clip section/context C1..C4
 Controller Target Ch    = focused channel 1..16
 ```
 
@@ -272,6 +279,7 @@ layering:
 Hardware     enables direct controller input capture
 MIDI Inputs  assigns connected MIDI devices to controller slots 1..8
 Rescan       rechecks connected MIDI inputs and reopens assigned devices
+Auto Rec     sends record automation on/off as CC 113 value 0/127
 Map On       enables the slot
 Learn        captures the next incoming CC into the input channel and CC fields
 Input        matches a specific channel or Omni
@@ -287,6 +295,12 @@ mapped outputs on top of the original controller stream.
 
 The editor visualizes the last incoming CC, the last mapped output, and per-slot
 activity.
+
+`Auto Rec` is a saved and automatable plugin parameter. Clip envelopes can turn
+it on or off; when the value changes Galahad emits CC 113 with value `127` for
+on and `0` for off. The Ableton Remote Script treats that CC as an explicit
+record-mode set command, so it can drive Live's record state without relying on
+a toggle-only command.
 
 If no manual slot assignments have been made, hardware capture still auto-fills
 controller slots from input devices whose names include:

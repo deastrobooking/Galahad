@@ -18,6 +18,7 @@ inline constexpr int ControllerSurfaceMapSlotCount =
     ControllerSlotCount * ControllerPatternCount * ControllerTargetChannelCount * ControllerSurfaceControlCount * ControllerLayerCount;
 
 inline constexpr const char* HardwareCaptureId = "hardwareCapture";
+inline constexpr const char* AutomationRecordId = "automationRecord";
 inline constexpr const char* ControllerLayerId = "controllerLayer";
 inline constexpr const char* ControllerPatternId = "controllerPattern";
 inline constexpr const char* ControllerTargetChannelId = "controllerTargetChannel";

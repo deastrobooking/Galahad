@@ -218,6 +218,7 @@ private:
     void assignDefaultControllerSlotsIfNeeded(const std::vector<juce::MidiDeviceInfo>& devices);
     void closeHardwareMidiInputs();
     bool shouldCaptureHardwareInputs() const noexcept;
+    bool automationRecordEnabled() const noexcept;
     static bool isPreferredHardwareInput(const juce::MidiDeviceInfo& device);
     bool appendControllerMappings(const galahad::MidiEvent& event,
                                   int sourceControllerSlot,
@@ -260,6 +261,10 @@ private:
     std::atomic<int> lastControllerOutputValue_{ 0 };
     std::atomic<int> lastControllerOutputSlot_{ -1 };
     std::atomic<int> lastControllerOutputSerial_{ 0 };
+    bool hasAutomationRecordState_{ false };
+    bool lastAutomationRecordState_{ false };
+    bool hasAutomationSectionState_{ false };
+    int lastAutomationSection_{ -1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GalahadMidiToolsProcessor)
 };

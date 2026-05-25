@@ -38,6 +38,7 @@ private:
     void updateHardwareStatus();
     void updateSetupState();
     void updateSurfaceSummary();
+    void showHelpPopup();
     juce::String controllerSlotText(int slot) const;
 
     GalahadMidiToolsProcessor& processor_;
@@ -46,6 +47,8 @@ private:
     juce::Label hardwareLabel_;
     juce::Label deviceLabel_;
     juce::ToggleButton hardwareCaptureButton_;
+    juce::ToggleButton automationRecordButton_;
+    juce::TextButton helpButton_;
     juce::TextButton rescanButton_;
     juce::ToggleButton thruButton_;
     juce::Label setupLabel_;
@@ -74,6 +77,7 @@ private:
     std::array<juce::ComboBox, galahad::plugin::ControllerSlotCount> deviceSelectors_;
     juce::StringArray deviceSelectorIdentifiers_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> hardwareCaptureAttachment_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> automationRecordAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> thruAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> surfaceControllerAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> surfaceControlAttachment_;
@@ -86,6 +90,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> surfaceMinimumAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> surfaceMaximumAttachment_;
     std::unique_ptr<ActivityView> activityView_;
+    juce::Component::SafePointer<juce::CallOutBox> helpCallout_;
     std::array<std::unique_ptr<MapRow>, galahad::plugin::ControllerMapSlotCount> rows_;
     int learningSlot_{ -1 };
     int surfaceLearningControl_{ -1 };

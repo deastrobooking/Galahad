@@ -114,6 +114,9 @@ CC 114 value 0/127 = metronome off/on
 Play feedback intentionally uses CC `117`, not CC `110`, so feedback does not
 look like a transport command.
 
+The Remote Script also accepts CC `113` from Galahad as an explicit record-mode
+set command. Value `0..63` turns record off; value `64..127` turns record on.
+
 ### Session Navigation
 
 ```text
@@ -121,9 +124,13 @@ CC 111 value < 64  = move track bank left by 8
 CC 111 value >= 64 = move track bank right by 8
 CC 112 value < 64  = move scene bank up by 8
 CC 112 value >= 64 = move scene bank down by 8
+CC 119 value 0..3  = select automation clip section C1..C4
 ```
 
-The Remote Script clamps banks to available Live tracks/scenes.
+The Remote Script clamps banks to available Live tracks/scenes. Clip section
+selection divides the last Galahad-launched clip, or the currently highlighted
+clip if no Galahad clip has been launched, into four equal beat ranges and moves
+that clip's start marker to the selected range.
 
 ### Scene And Stop Commands
 

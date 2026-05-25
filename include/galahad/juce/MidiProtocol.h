@@ -49,6 +49,7 @@ public:
     static constexpr int DeviceToggleCc = 116;
     static constexpr int PlayFeedbackCc = 117;
     static constexpr int TrackStopCc = 118;
+    static constexpr int ClipSectionCc = 119;
 
     static constexpr uint8_t SysexManufacturer = 0x7d;
     static constexpr uint8_t SysexProjectTag0 = 0x47;

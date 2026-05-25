@@ -201,7 +201,18 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     }
     updateEngineConfig(bpm);
 
+    const bool automationRecordState = automationRecordEnabled();
+    const bool shouldPublishAutomationRecord = !hasAutomationRecordState_
+        || automationRecordState != lastAutomationRecordState_;
+    hasAutomationRecordState_ = true;
+    lastAutomationRecordState_ = automationRecordState;
+
     const auto surfaceContext = currentSurfacePerformanceContext();
+    const bool shouldPublishAutomationSection = !hasAutomationSectionState_
+        || surfaceContext.pattern != lastAutomationSection_;
+    hasAutomationSectionState_ = true;
+    lastAutomationSection_ = surfaceContext.pattern;
+
     const bool shouldRecallSurface = ! hasSurfacePerformanceContext_
         || (hasSurfacePerformanceContext_
         && (surfaceContext.layer != lastSurfacePerformanceContext_.layer
@@ -211,6 +222,26 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         appendSurfaceRecallEvents(surfaceContext, std::span<galahad::MidiEvent>(mapped.data(), mapped.size()), mappedCount);
     lastSurfacePerformanceContext_ = surfaceContext;
     hasSurfacePerformanceContext_ = true;
+
+    if (shouldPublishAutomationRecord && mappedCount < mapped.size())
+    {
+        mapped[mappedCount++] = galahad::MidiEvent{ galahad::MidiEventType::ControlChange,
+                                                    1,
+                                                    galahad::midi::MidiProtocol::RecordFeedbackCc,
+                                                    static_cast<uint8_t>(automationRecordState ? 127 : 0),
+                                                    0 };
+    }
+
+    if (shouldPublishAutomationSection && mappedCount < mapped.size())
+    {
+        mapped[mappedCount++] = galahad::MidiEvent{ galahad::MidiEventType::ControlChange,
+                                                    1,
+                                                    galahad::midi::MidiProtocol::ClipSectionCc,
+                                                    static_cast<uint8_t>(juce::jlimit(0,
+                                                                                     ControllerPatternCount - 1,
+                                                                                     surfaceContext.pattern)),
+                                                    0 };
+    }
 
     auto ingestMessage = [this, &incoming, &incomingCount, &mapped, &mappedCount](const juce::MidiMessage& message,
                                                                                   int samplePosition,
@@ -417,6 +448,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GalahadMidiToolsProcessor::c
     const auto outputChannelChoices = galahad::plugin::outputChannelChoices();
 
     addBool(galahad::plugin::HardwareCaptureId, "Hardware Capture", true);
+    addBool(galahad::plugin::AutomationRecordId, "Automation Record", false);
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(galahad::plugin::ControllerLayerId, 1),
         "Controller Layer",
@@ -807,6 +839,11 @@ void GalahadMidiToolsProcessor::closeHardwareMidiInputs()
 bool GalahadMidiToolsProcessor::shouldCaptureHardwareInputs() const noexcept
 {
     return boolValueOf(parameters_, galahad::plugin::HardwareCaptureId);
+}
+
+bool GalahadMidiToolsProcessor::automationRecordEnabled() const noexcept
+{
+    return boolValueOf(parameters_, galahad::plugin::AutomationRecordId);
 }
 
 bool GalahadMidiToolsProcessor::isPreferredHardwareInput(const juce::MidiDeviceInfo& device)
