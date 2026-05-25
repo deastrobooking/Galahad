@@ -1104,6 +1104,9 @@ void GalahadMidiToolsProcessor::appendSurfaceRecallEvents(const SurfacePerforman
     {
         for (int control = 0; control < ControllerSurfaceControlCount; ++control)
         {
+            if (!surfaceControlProfileSnapshot(controller, control).isActive())
+                continue;
+
             const int index = galahad::plugin::controllerSurfaceMapIndex(controller,
                                                                          context.pattern,
                                                                          context.targetChannel,
@@ -1236,6 +1239,170 @@ void GalahadMidiToolsProcessor::restoreControllerSurfaceMapsState(const juce::Va
     }
 }
 
+void GalahadMidiToolsProcessor::initializeControllerSurfaceControlProfiles() noexcept
+{
+    for (int controller = 0; controller < ControllerSlotCount; ++controller)
+    {
+        for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+        {
+            const int index = controller * ControllerSurfaceControlCount + control;
+            auto& profile = controllerSurfaceControlProfiles_[static_cast<size_t>(index)];
+            profile.active.store(1, std::memory_order_relaxed);
+            profile.type.store(galahad::plugin::isControllerFaderControl(control)
+                                   ? galahad::plugin::ControllerSurfaceControlTypeValue
+                                   : galahad::plugin::ControllerSurfaceControlTypeButton,
+                               std::memory_order_relaxed);
+        }
+    }
+}
+
+juce::ValueTree GalahadMidiToolsProcessor::createControllerSurfaceControlProfilesState() const
+{
+    juce::ValueTree state{ SurfaceControlsStateId };
+
+    for (int controller = 0; controller < ControllerSlotCount; ++controller)
+    {
+        for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+        {
+            const int index = controller * ControllerSurfaceControlCount + control;
+            const auto& profile = controllerSurfaceControlProfiles_[static_cast<size_t>(index)];
+            const int active = profile.active.load(std::memory_order_relaxed);
+            const int type = profile.type.load(std::memory_order_relaxed);
+            const int defaultType = galahad::plugin::isControllerFaderControl(control)
+                ? galahad::plugin::ControllerSurfaceControlTypeValue
+                : galahad::plugin::ControllerSurfaceControlTypeButton;
+
+            if (active == 1 && type == defaultType)
+                continue;
+
+            juce::ValueTree child{ SurfaceControlStateId };
+            child.setProperty("controller", controller, nullptr);
+            child.setProperty("control", control, nullptr);
+            child.setProperty("active", active, nullptr);
+            child.setProperty("type", type, nullptr);
+            state.addChild(child, -1, nullptr);
+        }
+    }
+
+    return state;
+}
+
+void GalahadMidiToolsProcessor::restoreControllerSurfaceControlProfilesState(const juce::ValueTree& state)
+{
+    initializeControllerSurfaceControlProfiles();
+    if (!state.isValid())
+        return;
+
+    for (int childIndex = 0; childIndex < state.getNumChildren(); ++childIndex)
+    {
+        const auto child = state.getChild(childIndex);
+        if (!child.hasType(SurfaceControlStateId))
+            continue;
+
+        const int controller = juce::jlimit(0, ControllerSlotCount - 1, static_cast<int>(child.getProperty("controller", 0)));
+        const int control = juce::jlimit(0, ControllerSurfaceControlCount - 1, static_cast<int>(child.getProperty("control", 0)));
+        const int index = controller * ControllerSurfaceControlCount + control;
+        auto& profile = controllerSurfaceControlProfiles_[static_cast<size_t>(index)];
+        profile.active.store(juce::jlimit(0, 1, static_cast<int>(child.getProperty("active", 1))), std::memory_order_relaxed);
+        profile.type.store(juce::jlimit(galahad::plugin::ControllerSurfaceControlTypeValue,
+                                        galahad::plugin::ControllerSurfaceControlTypeButton,
+                                        static_cast<int>(child.getProperty("type", 0))),
+                           std::memory_order_relaxed);
+    }
+}
+
+GalahadMidiToolsProcessor::SurfaceControlProfileSnapshot
+GalahadMidiToolsProcessor::surfaceControlProfileSnapshot(int controller, int control) const noexcept
+{
+    controller = juce::jlimit(0, ControllerSlotCount - 1, controller);
+    control = juce::jlimit(0, ControllerSurfaceControlCount - 1, control);
+    const int index = controller * ControllerSurfaceControlCount + control;
+    const auto& profile = controllerSurfaceControlProfiles_[static_cast<size_t>(index)];
+    return SurfaceControlProfileSnapshot{
+        profile.active.load(std::memory_order_relaxed),
+        profile.type.load(std::memory_order_relaxed),
+    };
+}
+
+void GalahadMidiToolsProcessor::setSurfaceControlProfileSnapshot(int controller,
+                                                                 int control,
+                                                                 const SurfaceControlProfileSnapshot& snapshot) noexcept
+{
+    controller = juce::jlimit(0, ControllerSlotCount - 1, controller);
+    control = juce::jlimit(0, ControllerSurfaceControlCount - 1, control);
+    const int index = controller * ControllerSurfaceControlCount + control;
+    auto& profile = controllerSurfaceControlProfiles_[static_cast<size_t>(index)];
+    profile.active.store(juce::jlimit(0, 1, snapshot.active), std::memory_order_relaxed);
+    profile.type.store(juce::jlimit(galahad::plugin::ControllerSurfaceControlTypeValue,
+                                    galahad::plugin::ControllerSurfaceControlTypeButton,
+                                    snapshot.type),
+                       std::memory_order_relaxed);
+}
+
+int GalahadMidiToolsProcessor::addSurfaceControl(int controller, int type) noexcept
+{
+    controller = juce::jlimit(0, ControllerSlotCount - 1, controller);
+    type = juce::jlimit(galahad::plugin::ControllerSurfaceControlTypeValue,
+                       galahad::plugin::ControllerSurfaceControlTypeButton,
+                       type);
+
+    for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+    {
+        auto profile = surfaceControlProfileSnapshot(controller, control);
+        if (profile.isActive())
+            continue;
+
+        profile.active = 1;
+        profile.type = type;
+        setSurfaceControlProfileSnapshot(controller, control, profile);
+        return control;
+    }
+
+    return -1;
+}
+
+void GalahadMidiToolsProcessor::removeSurfaceControl(int controller, int control) noexcept
+{
+    auto profile = surfaceControlProfileSnapshot(controller, control);
+    profile.active = 0;
+    setSurfaceControlProfileSnapshot(controller, control, profile);
+}
+
+int GalahadMidiToolsProcessor::firstActiveSurfaceControl(int controller) const noexcept
+{
+    controller = juce::jlimit(0, ControllerSlotCount - 1, controller);
+    for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+        if (surfaceControlProfileSnapshot(controller, control).isActive())
+            return control;
+
+    return -1;
+}
+
+int GalahadMidiToolsProcessor::activeSurfaceControlCount(int controller) const noexcept
+{
+    controller = juce::jlimit(0, ControllerSlotCount - 1, controller);
+    int count = 0;
+    for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+        if (surfaceControlProfileSnapshot(controller, control).isActive())
+            ++count;
+
+    return count;
+}
+
+juce::String GalahadMidiToolsProcessor::surfaceControlLabel(int controller, int control) const
+{
+    const auto profile = surfaceControlProfileSnapshot(controller, control);
+    int ordinal = 1;
+    for (int candidate = 0; candidate < control; ++candidate)
+    {
+        const auto candidateProfile = surfaceControlProfileSnapshot(controller, candidate);
+        if (candidateProfile.isActive() && candidateProfile.type == profile.type)
+            ++ordinal;
+    }
+
+    return galahad::plugin::controllerSurfaceControlTypeName(profile.type) + " " + juce::String(ordinal);
+}
+
 bool GalahadMidiToolsProcessor::appendControllerMappings(const galahad::MidiEvent& event,
                                                          int sourceControllerSlot,
                                                          std::span<galahad::MidiEvent> output,
@@ -1275,7 +1442,12 @@ bool GalahadMidiToolsProcessor::appendControllerMappings(const galahad::MidiEven
         return true;
     };
 
-    auto appendSurfaceMap = [this, &event, output, &outputCount](ControllerSurfaceMap& map, int telemetrySlot) mutable {
+    auto appendSurfaceMap = [this, &event, output, &outputCount](ControllerSurfaceMap& map,
+                                                                const SurfaceControlProfileSnapshot& profile,
+                                                                int telemetrySlot) mutable {
+        if (!profile.isActive())
+            return false;
+
         if (map.enabled.load(std::memory_order_relaxed) == 0)
             return false;
 
@@ -1294,12 +1466,17 @@ bool GalahadMidiToolsProcessor::appendControllerMappings(const galahad::MidiEven
         const int outputChannelIndex = juce::jlimit(0, 15, map.outputChannel.load(std::memory_order_relaxed));
         const uint8_t outputChannel = static_cast<uint8_t>(outputChannelIndex + 1);
         const uint8_t outputCc = static_cast<uint8_t>(juce::jlimit(0, 127, map.outputCc.load(std::memory_order_relaxed)));
+        const auto outputValue = profile.isButton()
+            ? switchControllerValue(event.data2,
+                                    map.minimum.load(std::memory_order_relaxed),
+                                    map.maximum.load(std::memory_order_relaxed))
+            : scaleControllerValue(event.data2,
+                                   map.minimum.load(std::memory_order_relaxed),
+                                   map.maximum.load(std::memory_order_relaxed));
         const auto mapped = galahad::MidiEvent{ galahad::MidiEventType::ControlChange,
                                                 outputChannel,
                                                 outputCc,
-                                                scaleControllerValue(event.data2,
-                                                                     map.minimum.load(std::memory_order_relaxed),
-                                                                     map.maximum.load(std::memory_order_relaxed)),
+                                                outputValue,
                                                 event.sampleOffset };
 
         output[outputCount++] = mapped;
@@ -1318,12 +1495,13 @@ bool GalahadMidiToolsProcessor::appendControllerMappings(const galahad::MidiEven
 
         for (int control = 0; control < ControllerSurfaceControlCount; ++control)
         {
+            const auto profile = surfaceControlProfileSnapshot(sourceControllerSlot, control);
             const int index = galahad::plugin::controllerSurfaceMapIndex(sourceControllerSlot,
                                                                          context.pattern,
                                                                          context.targetChannel,
                                                                          control,
                                                                          context.layer);
-            matched = appendSurfaceMap(controllerSurfaceMaps_[static_cast<size_t>(index)], context.layer) || matched;
+            matched = appendSurfaceMap(controllerSurfaceMaps_[static_cast<size_t>(index)], profile, context.layer) || matched;
         }
     }
 
