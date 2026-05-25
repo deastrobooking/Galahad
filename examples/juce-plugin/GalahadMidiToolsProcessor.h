@@ -67,6 +67,10 @@ public:
 private:
     static constexpr size_t MaxBlockEvents = galahad::MidiToolsEngine::MaxBlockEvents;
     static constexpr int ControllerMapSlotCount = galahad::plugin::ControllerMapSlotCount;
+    static constexpr int ControllerSlotCount = galahad::plugin::ControllerSlotCount;
+    static constexpr int ControllerLayerCount = galahad::plugin::ControllerLayerCount;
+    static constexpr int ControllerSurfaceControlCount = galahad::plugin::ControllerSurfaceControlCount;
+    static constexpr int ControllerSurfaceMapSlotCount = galahad::plugin::ControllerSurfaceMapSlotCount;
 
     struct ControllerMapParameters
     {
@@ -77,6 +81,14 @@ private:
         std::atomic<float>* outputCc{ nullptr };
         std::atomic<float>* minimum{ nullptr };
         std::atomic<float>* maximum{ nullptr };
+    };
+
+    struct HardwareMidiInput
+    {
+        int slot{ 0 };
+        juce::String name;
+        std::unique_ptr<juce::MidiMessageCollector> collector;
+        std::unique_ptr<juce::MidiInput> input;
     };
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -91,6 +103,7 @@ private:
     bool shouldCaptureHardwareInputs() const noexcept;
     static bool isPreferredHardwareInput(const juce::MidiDeviceInfo& device);
     bool appendControllerMappings(const galahad::MidiEvent& event,
+                                  int sourceControllerSlot,
                                   std::span<galahad::MidiEvent> output,
                                   size_t& outputCount) noexcept;
     bool shouldPassMappedSource() const noexcept;
@@ -100,10 +113,10 @@ private:
     galahad::MidiToolsEngine engine_;
     juce::AudioProcessorValueTreeState parameters_;
     std::array<ControllerMapParameters, ControllerMapSlotCount> controllerMapParameters_{};
+    std::array<ControllerMapParameters, ControllerSurfaceMapSlotCount> controllerSurfaceMapParameters_{};
     galahad::SpscQueue<galahad::midi::SessionCell, 256> launchedCells_;
     std::unique_ptr<juce::MidiOutput> virtualMidiOutput_;
-    juce::MidiMessageCollector hardwareMidiCollector_;
-    std::vector<std::unique_ptr<juce::MidiInput>> hardwareMidiInputs_;
+    std::vector<HardwareMidiInput> hardwareMidiInputs_;
     juce::StringArray activeHardwareInputNames_;
     mutable std::mutex hardwareMidiInputsMutex_;
     double sampleRate_{ 44100.0 };

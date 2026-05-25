@@ -5,8 +5,16 @@
 namespace galahad::plugin
 {
 inline constexpr int ControllerMapSlotCount = 4;
+inline constexpr int ControllerSlotCount = 8;
+inline constexpr int ControllerLayerCount = 4;
+inline constexpr int ControllerFaderCount = 8;
+inline constexpr int ControllerButtonCount = 15;
+inline constexpr int ControllerSurfaceControlCount = ControllerFaderCount + ControllerButtonCount;
+inline constexpr int ControllerSurfaceMapSlotCount =
+    ControllerSlotCount * ControllerSurfaceControlCount * ControllerLayerCount;
 
 inline constexpr const char* HardwareCaptureId = "hardwareCapture";
+inline constexpr const char* ControllerLayerId = "controllerLayer";
 inline constexpr const char* MapThruId = "mapThru";
 inline constexpr const char* MapEnabledSuffix = "Enabled";
 inline constexpr const char* MapInputChannelSuffix = "InCh";
@@ -19,6 +27,36 @@ inline constexpr const char* MapMaximumSuffix = "Max";
 inline juce::String controllerMapParameterId(int slot, const char* suffix)
 {
     return "map" + juce::String(slot + 1) + suffix;
+}
+
+inline int controllerSurfaceMapIndex(int controllerSlot, int control, int layer)
+{
+    return ((controllerSlot * ControllerSurfaceControlCount) + control) * ControllerLayerCount + layer;
+}
+
+inline bool isControllerFaderControl(int control)
+{
+    return control >= 0 && control < ControllerFaderCount;
+}
+
+inline juce::String controllerSurfaceControlName(int control)
+{
+    if (isControllerFaderControl(control))
+        return "Fader " + juce::String(control + 1);
+
+    return "Button " + juce::String(control - ControllerFaderCount + 1);
+}
+
+inline juce::String controllerSurfaceMapParameterId(int controllerSlot, int control, int layer, const char* suffix)
+{
+    const auto controlPrefix = isControllerFaderControl(control)
+        ? "F" + juce::String(control + 1)
+        : "B" + juce::String(control - ControllerFaderCount + 1);
+
+    return "ctl" + juce::String(controllerSlot + 1)
+        + controlPrefix
+        + "Map" + juce::String(layer + 1)
+        + suffix;
 }
 
 inline juce::StringArray inputChannelChoices()

@@ -191,10 +191,27 @@ Target channels   1..16 quick channel focus buttons
 Clip circles      C1..C4 automation clip contexts
 ```
 
-The current build keeps controller slots, layers, target channels, and clip
-circles as setup context while the learned map slots below perform the actual
-MIDI remapping. This gives the performance layout a stable home before the
-engine grows true per-device and per-layer banks.
+The mapper model supports up to 8 captured controller inputs. Each controller
+slot has 8 fader-style controls and 15 button-style controls. Every one of
+those 23 controls has four layer mappings named `Map 1` through `Map 4`.
+
+`Controller Layer` selects which surface layer is active. The editor's A-D layer
+buttons update that parameter. Surface mappings are evaluated only for the
+hardware input slot that produced the MIDI event, so two controllers can use the
+same CC numbers without colliding once Galahad has opened them directly.
+
+Each surface mapping has:
+
+```text
+On
+Input channel / CC
+Output channel / CC
+Min / Max
+```
+
+The compact four-row mapper remains available as a legacy/global mapper and
+still works for host-routed MIDI input. The 8-controller surface mapper is meant
+for Galahad's direct hardware capture lane.
 
 ## Controller Mapper
 

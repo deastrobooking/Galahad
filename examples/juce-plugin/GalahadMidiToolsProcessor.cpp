@@ -128,7 +128,6 @@ GalahadMidiToolsProcessor::GalahadMidiToolsProcessor()
                                .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters_(*this, nullptr, "GalahadMidiTools", createParameterLayout())
 {
-    hardwareMidiCollector_.reset(sampleRate_);
     cacheControllerMapParameters();
     updateEngineConfig(120.0);
 }
@@ -144,7 +143,6 @@ void GalahadMidiToolsProcessor::prepareToPlay(double sampleRate, int samplesPerB
     sampleRate_ = sampleRate;
     engine_.reset();
     launchedCells_.reset();
-    hardwareMidiCollector_.reset(sampleRate_);
     ensureVirtualMidiOutput();
     refreshHardwareMidiInputs();
 }
@@ -188,7 +186,9 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
     size_t incomingCount = 0;
     size_t mappedCount = 0;
-    auto ingestMessage = [this, &incoming, &incomingCount, &mapped, &mappedCount](const juce::MidiMessage& message, int samplePosition) {
+    auto ingestMessage = [this, &incoming, &incomingCount, &mapped, &mappedCount](const juce::MidiMessage& message,
+                                                                                  int samplePosition,
+                                                                                  int sourceControllerSlot) {
         if (message.isNoteOnOrOff() || message.isController())
         {
             const auto event = fromJuceMidi(message, samplePosition);
@@ -198,6 +198,7 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             {
                 recordControllerInput(event);
                 mappedSource = appendControllerMappings(event,
+                                                        sourceControllerSlot,
                                                         std::span<galahad::MidiEvent>(mapped.data(), mapped.size()),
                                                         mappedCount);
             }
@@ -216,14 +217,21 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     };
 
     for (const auto metadata : midiMessages)
-        ingestMessage(metadata.getMessage(), metadata.samplePosition);
+        ingestMessage(metadata.getMessage(), metadata.samplePosition, -1);
 
-    juce::MidiBuffer hardwareMessages;
-    hardwareMidiCollector_.removeNextBlockOfMessages(hardwareMessages, buffer.getNumSamples());
     if (shouldCaptureHardwareInputs())
     {
-        for (const auto metadata : hardwareMessages)
-            ingestMessage(metadata.getMessage(), metadata.samplePosition);
+        const std::lock_guard lock(hardwareMidiInputsMutex_);
+        for (auto& hardware : hardwareMidiInputs_)
+        {
+            if (hardware.collector == nullptr)
+                continue;
+
+            juce::MidiBuffer hardwareMessages;
+            hardware.collector->removeNextBlockOfMessages(hardwareMessages, buffer.getNumSamples());
+            for (const auto metadata : hardwareMessages)
+                ingestMessage(metadata.getMessage(), metadata.samplePosition, hardware.slot);
+        }
     }
 
     size_t processedCount = engine_.process(std::span<const galahad::MidiEvent>(incoming.data(), incomingCount),
@@ -360,6 +368,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout GalahadMidiToolsProcessor::c
     addBool(RouteCcsId, "Route CCs", true);
 
     addBool(galahad::plugin::HardwareCaptureId, "Hardware Capture", true);
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(galahad::plugin::ControllerLayerId, 1),
+        "Controller Layer",
+        juce::StringArray{ "Map 1", "Map 2", "Map 3", "Map 4" },
+        0));
     addBool(galahad::plugin::MapThruId, "Map Thru", false);
     const auto inputChannelChoices = galahad::plugin::inputChannelChoices();
     const auto outputChannelChoices = galahad::plugin::outputChannelChoices();
@@ -399,6 +412,63 @@ juce::AudioProcessorValueTreeState::ParameterLayout GalahadMidiToolsProcessor::c
                0,
                127,
                127);
+    }
+
+    for (int controller = 0; controller < galahad::plugin::ControllerSlotCount; ++controller)
+    {
+        for (int control = 0; control < galahad::plugin::ControllerSurfaceControlCount; ++control)
+        {
+            for (int layer = 0; layer < galahad::plugin::ControllerLayerCount; ++layer)
+            {
+                const auto mapName = "C" + juce::String(controller + 1)
+                    + " " + galahad::plugin::controllerSurfaceControlName(control)
+                    + " Map " + juce::String(layer + 1);
+                const int defaultCc = juce::jlimit(0, 127, control);
+
+                addBool(galahad::plugin::controllerSurfaceMapParameterId(
+                            controller, control, layer, galahad::plugin::MapEnabledSuffix).toRawUTF8(),
+                        mapName + " On",
+                        false);
+                params.push_back(std::make_unique<juce::AudioParameterChoice>(
+                    juce::ParameterID(galahad::plugin::controllerSurfaceMapParameterId(
+                                          controller, control, layer, galahad::plugin::MapInputChannelSuffix),
+                                      1),
+                    mapName + " In Ch",
+                    inputChannelChoices,
+                    0));
+                addInt(galahad::plugin::controllerSurfaceMapParameterId(
+                           controller, control, layer, galahad::plugin::MapInputCcSuffix).toRawUTF8(),
+                       mapName + " In CC",
+                       0,
+                       127,
+                       defaultCc);
+                params.push_back(std::make_unique<juce::AudioParameterChoice>(
+                    juce::ParameterID(galahad::plugin::controllerSurfaceMapParameterId(
+                                          controller, control, layer, galahad::plugin::MapOutputChannelSuffix),
+                                      1),
+                    mapName + " Out Ch",
+                    outputChannelChoices,
+                    controller % 16));
+                addInt(galahad::plugin::controllerSurfaceMapParameterId(
+                           controller, control, layer, galahad::plugin::MapOutputCcSuffix).toRawUTF8(),
+                       mapName + " Out CC",
+                       0,
+                       127,
+                       defaultCc);
+                addInt(galahad::plugin::controllerSurfaceMapParameterId(
+                           controller, control, layer, galahad::plugin::MapMinimumSuffix).toRawUTF8(),
+                       mapName + " Min",
+                       0,
+                       127,
+                       0);
+                addInt(galahad::plugin::controllerSurfaceMapParameterId(
+                           controller, control, layer, galahad::plugin::MapMaximumSuffix).toRawUTF8(),
+                       mapName + " Max",
+                       0,
+                       127,
+                       127);
+            }
+        }
     }
 
     return { params.begin(), params.end() };
@@ -454,10 +524,10 @@ void GalahadMidiToolsProcessor::refreshHardwareMidiInputs()
 {
     const std::lock_guard lock(hardwareMidiInputsMutex_);
 
-    for (auto& input : hardwareMidiInputs_)
+    for (auto& hardware : hardwareMidiInputs_)
     {
-        if (input != nullptr)
-            input->stop();
+        if (hardware.input != nullptr)
+            hardware.input->stop();
     }
     hardwareMidiInputs_.clear();
     activeHardwareInputNames_.clear();
@@ -468,18 +538,28 @@ void GalahadMidiToolsProcessor::refreshHardwareMidiInputs()
         return;
     }
 
+    int slot = 0;
     for (const auto& device : juce::MidiInput::getAvailableDevices())
     {
+        if (slot >= ControllerSlotCount)
+            break;
+
         if (!isPreferredHardwareInput(device))
             continue;
 
-        auto input = juce::MidiInput::openDevice(device.identifier, &hardwareMidiCollector_);
-        if (input == nullptr)
+        HardwareMidiInput hardware;
+        hardware.slot = slot;
+        hardware.name = device.name;
+        hardware.collector = std::make_unique<juce::MidiMessageCollector>();
+        hardware.collector->reset(sampleRate_);
+        hardware.input = juce::MidiInput::openDevice(device.identifier, hardware.collector.get());
+        if (hardware.input == nullptr)
             continue;
 
-        input->start();
+        hardware.input->start();
         activeHardwareInputNames_.add(device.name);
-        hardwareMidiInputs_.push_back(std::move(input));
+        hardwareMidiInputs_.push_back(std::move(hardware));
+        ++slot;
     }
 
     activeHardwareInputCount_.store(static_cast<int>(hardwareMidiInputs_.size()), std::memory_order_relaxed);
@@ -495,10 +575,10 @@ void GalahadMidiToolsProcessor::closeHardwareMidiInputs()
 {
     const std::lock_guard lock(hardwareMidiInputsMutex_);
 
-    for (auto& input : hardwareMidiInputs_)
+    for (auto& hardware : hardwareMidiInputs_)
     {
-        if (input != nullptr)
-            input->stop();
+        if (hardware.input != nullptr)
+            hardware.input->stop();
     }
 
     hardwareMidiInputs_.clear();
@@ -538,28 +618,56 @@ void GalahadMidiToolsProcessor::cacheControllerMapParameters()
         map.minimum = parameters_.getRawParameterValue(galahad::plugin::controllerMapParameterId(slot, galahad::plugin::MapMinimumSuffix));
         map.maximum = parameters_.getRawParameterValue(galahad::plugin::controllerMapParameterId(slot, galahad::plugin::MapMaximumSuffix));
     }
+
+    for (int controller = 0; controller < ControllerSlotCount; ++controller)
+    {
+        for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+        {
+            for (int layer = 0; layer < ControllerLayerCount; ++layer)
+            {
+                const int index = galahad::plugin::controllerSurfaceMapIndex(controller, control, layer);
+                auto& map = controllerSurfaceMapParameters_[static_cast<size_t>(index)];
+                map.enabled = parameters_.getRawParameterValue(galahad::plugin::controllerSurfaceMapParameterId(
+                    controller, control, layer, galahad::plugin::MapEnabledSuffix));
+                map.inputChannel = parameters_.getRawParameterValue(galahad::plugin::controllerSurfaceMapParameterId(
+                    controller, control, layer, galahad::plugin::MapInputChannelSuffix));
+                map.inputCc = parameters_.getRawParameterValue(galahad::plugin::controllerSurfaceMapParameterId(
+                    controller, control, layer, galahad::plugin::MapInputCcSuffix));
+                map.outputChannel = parameters_.getRawParameterValue(galahad::plugin::controllerSurfaceMapParameterId(
+                    controller, control, layer, galahad::plugin::MapOutputChannelSuffix));
+                map.outputCc = parameters_.getRawParameterValue(galahad::plugin::controllerSurfaceMapParameterId(
+                    controller, control, layer, galahad::plugin::MapOutputCcSuffix));
+                map.minimum = parameters_.getRawParameterValue(galahad::plugin::controllerSurfaceMapParameterId(
+                    controller, control, layer, galahad::plugin::MapMinimumSuffix));
+                map.maximum = parameters_.getRawParameterValue(galahad::plugin::controllerSurfaceMapParameterId(
+                    controller, control, layer, galahad::plugin::MapMaximumSuffix));
+            }
+        }
+    }
 }
 
 bool GalahadMidiToolsProcessor::appendControllerMappings(const galahad::MidiEvent& event,
+                                                         int sourceControllerSlot,
                                                          std::span<galahad::MidiEvent> output,
                                                          size_t& outputCount) noexcept
 {
     bool matched = false;
 
-    for (int slot = 0; slot < ControllerMapSlotCount && outputCount < output.size(); ++slot)
-    {
-        const auto& map = controllerMapParameters_[static_cast<size_t>(slot)];
+    auto appendMap = [this, &event, output, &outputCount](const ControllerMapParameters& map, int telemetrySlot) mutable {
         if (!parameterBoolValue(map.enabled, false))
-            continue;
+            return false;
 
         const int inputChannel = juce::jlimit(0, 16, parameterIntValue(map.inputChannel, 0));
         const int inputCc = juce::jlimit(0, 127, parameterIntValue(map.inputCc, 0));
 
         if (inputCc != event.data1)
-            continue;
+            return false;
 
         if (inputChannel != 0 && inputChannel != event.channel)
-            continue;
+            return false;
+
+        if (outputCount >= output.size())
+            return false;
 
         const int outputChannelIndex = juce::jlimit(0, 15, parameterIntValue(map.outputChannel, 0));
         const uint8_t outputChannel = static_cast<uint8_t>(outputChannelIndex + 1);
@@ -573,8 +681,24 @@ bool GalahadMidiToolsProcessor::appendControllerMappings(const galahad::MidiEven
                                                 event.sampleOffset };
 
         output[outputCount++] = mapped;
-        recordControllerOutput(mapped, slot);
-        matched = true;
+        recordControllerOutput(mapped, telemetrySlot);
+        return true;
+    };
+
+    for (int slot = 0; slot < ControllerMapSlotCount; ++slot)
+        matched = appendMap(controllerMapParameters_[static_cast<size_t>(slot)], slot) || matched;
+
+    if (sourceControllerSlot >= 0 && sourceControllerSlot < ControllerSlotCount)
+    {
+        const int activeLayer = juce::jlimit(0,
+                                            ControllerLayerCount - 1,
+                                            static_cast<int>(std::lround(valueOf(parameters_, galahad::plugin::ControllerLayerId))));
+
+        for (int control = 0; control < ControllerSurfaceControlCount; ++control)
+        {
+            const int index = galahad::plugin::controllerSurfaceMapIndex(sourceControllerSlot, control, activeLayer);
+            matched = appendMap(controllerSurfaceMapParameters_[static_cast<size_t>(index)], activeLayer) || matched;
+        }
     }
 
     return matched;

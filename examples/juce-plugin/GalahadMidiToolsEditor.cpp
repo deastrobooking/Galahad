@@ -1,6 +1,7 @@
 #include "GalahadMidiToolsEditor.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -393,6 +394,8 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
         configurePanelButton(button, PinkRed);
         button.onClick = [this, layer] {
             selectedLayer_ = layer;
+            if (auto* parameter = processor_.parameters().getParameter(galahad::plugin::ControllerLayerId))
+                parameter->setValueNotifyingHost(parameter->convertTo0to1(static_cast<float>(layer)));
             updateSetupState();
         };
         addAndMakeVisible(button);
@@ -598,6 +601,18 @@ void GalahadMidiToolsEditor::timerCallback()
     {
         lastHardwareInputCount_ = hardwareInputCount;
         updateHardwareStatus();
+    }
+
+    if (const auto* layerValue = processor_.parameters().getRawParameterValue(galahad::plugin::ControllerLayerId))
+    {
+        const int activeLayer = juce::jlimit(0,
+                                            galahad::plugin::ControllerLayerCount - 1,
+                                            static_cast<int>(std::lround(layerValue->load(std::memory_order_relaxed))));
+        if (activeLayer != selectedLayer_)
+        {
+            selectedLayer_ = activeLayer;
+            updateSetupState();
+        }
     }
 
     const auto input = processor_.lastControllerInput();
