@@ -852,6 +852,7 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
     processor_.syncAndLoadSurfaceEditorSelection();
     updateHardwareStatus();
     updateSetupState();
+    refreshSurfaceRows();
     updateSurfaceSummary();
     lastHardwareInputCount_ = processor_.activeHardwareInputCount();
     lastHardwareCaptureState_ = hardwareCaptureButton_.getToggleState();
@@ -867,7 +868,7 @@ void GalahadMidiToolsEditor::paint(juce::Graphics& graphics)
     graphics.fillAll(Background);
 
     auto area = getLocalBounds().reduced(Margin);
-    area.removeFromTop(500);
+    area.removeFromTop(650);
 
     graphics.setColour(MutedText);
     graphics.setFont(12.0f);
@@ -902,12 +903,12 @@ void GalahadMidiToolsEditor::paint(juce::Graphics& graphics)
     surface.removeFromTop(48 + 22 + 8 + 42 + 8 + 140);
     surface.removeFromTop(28);
     auto surfaceHeader = surface.removeFromTop(18);
-    graphics.drawText("Controller", surfaceHeader.removeFromLeft(130), juce::Justification::centredLeft);
-    graphics.drawText("Control", surfaceHeader.removeFromLeft(160), juce::Justification::centredLeft);
-    graphics.drawText("Map", surfaceHeader.removeFromLeft(92), juce::Justification::centredLeft);
-    graphics.drawText("State", surfaceHeader.removeFromLeft(76), juce::Justification::centredLeft);
-    graphics.drawText("Input", surfaceHeader.removeFromLeft(206), juce::Justification::centredLeft);
-    graphics.drawText("Output", surfaceHeader.removeFromLeft(206), juce::Justification::centredLeft);
+    graphics.drawText("Control", takeColumn(surfaceHeader, SurfaceControlWidth), juce::Justification::centredLeft);
+    graphics.drawText("Maps", takeColumn(surfaceHeader, SurfaceLayersWidth), juce::Justification::centredLeft);
+    graphics.drawText("Map", takeColumn(surfaceHeader, SurfaceMapWidth), juce::Justification::centredLeft);
+    graphics.drawText("Learn", takeColumn(surfaceHeader, SurfaceLearnWidth), juce::Justification::centredLeft);
+    graphics.drawText("Input", takeColumn(surfaceHeader, SurfaceChannelWidth + SurfaceCcWidth + Gap), juce::Justification::centredLeft);
+    graphics.drawText("Output", takeColumn(surfaceHeader, SurfaceChannelWidth + SurfaceCcWidth + Gap), juce::Justification::centredLeft);
     graphics.drawText("Range", surfaceHeader, juce::Justification::centredLeft);
 }
 
@@ -970,37 +971,23 @@ void GalahadMidiToolsEditor::resized()
             channelButtons_[static_cast<size_t>(channel)]->setBounds(bounds);
     }
 
-    auto surfaceArea = area.removeFromTop(122);
+    auto surfaceArea = area.removeFromTop(282);
     auto surfaceTop = surfaceArea.removeFromTop(28);
     surfaceLabel_.setBounds(surfaceTop.removeFromLeft(180));
     surfaceSummaryLabel_.setBounds(surfaceTop);
     surfaceArea.removeFromTop(18);
-    auto surfaceRow = surfaceArea.removeFromTop(34);
-    surfaceController_.setBounds(surfaceRow.removeFromLeft(122).reduced(0, 2));
-    surfaceRow.removeFromLeft(8);
-    surfaceControl_.setBounds(surfaceRow.removeFromLeft(152).reduced(0, 2));
-    surfaceRow.removeFromLeft(8);
-    surfaceMap_.setBounds(surfaceRow.removeFromLeft(84).reduced(0, 2));
-    surfaceRow.removeFromLeft(8);
-    surfaceEnabled_.setBounds(surfaceRow.removeFromLeft(68).reduced(0, 2));
-    surfaceRow.removeFromLeft(8);
-    surfaceInputChannel_.setBounds(surfaceRow.removeFromLeft(96).reduced(0, 2));
-    surfaceRow.removeFromLeft(8);
-    surfaceInputCc_.setBounds(surfaceRow.removeFromLeft(118).reduced(0, 2));
-    surfaceRow.removeFromLeft(8);
-    surfaceOutputChannel_.setBounds(surfaceRow.removeFromLeft(96).reduced(0, 2));
-    surfaceRow.removeFromLeft(8);
-    surfaceOutputCc_.setBounds(surfaceRow.removeFromLeft(118).reduced(0, 2));
-    surfaceRow.removeFromLeft(8);
-    surfaceMinimum_.setBounds(surfaceRow.removeFromLeft(110).reduced(0, 2));
-    surfaceRow.removeFromLeft(8);
-    surfaceMaximum_.setBounds(surfaceRow.removeFromLeft(110).reduced(0, 2));
+    surfaceViewport_.setBounds(surfaceArea);
+    if (surfaceRowsContent_ != nullptr)
+    {
+        const int viewportWidth = std::max(1, surfaceViewport_.getMaximumVisibleWidth());
+        surfaceRowsContent_->setSize(viewportWidth, SurfaceRowHeight * static_cast<int>(surfaceRows_.size()));
+    }
 
     area.removeFromTop(12);
     if (activityView_ != nullptr)
-        activityView_->setBounds(area.removeFromTop(86));
+        activityView_->setBounds(area.removeFromTop(76));
     else
-        area.removeFromTop(86);
+        area.removeFromTop(76);
     area.removeFromTop(12);
     area.removeFromTop(22);
 
