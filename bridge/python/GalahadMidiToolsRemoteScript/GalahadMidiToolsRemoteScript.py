@@ -126,7 +126,7 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
             return
 
         slot.fire()
-        self._last_launched_cell = (track, scene)
+        self._last_launched_cell = (self._track_offset + track, self._scene_offset + scene)
         self._refresh_clip_feedback(track, scene)
 
     def _handle_cc(self, channel, cc, value):
@@ -235,7 +235,7 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
 
     def _automation_section_clip(self):
         if self._last_launched_cell is not None:
-            slot = self._clip_slot_at(self._last_launched_cell[0], self._last_launched_cell[1])
+            slot = self._clip_slot_at_absolute(self._last_launched_cell[0], self._last_launched_cell[1])
             clip = self._clip_from_slot(slot)
             if clip is not None:
                 return clip
@@ -306,11 +306,15 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
         return None
 
     def _clip_slot_at(self, bank_track, bank_scene):
-        track = self._track_at(bank_track)
-        scene_index = self._scene_offset + bank_scene
-        if track is None or scene_index >= len(self.song().scenes):
+        return self._clip_slot_at_absolute(self._track_offset + bank_track,
+                                           self._scene_offset + bank_scene)
+
+    def _clip_slot_at_absolute(self, track_index, scene_index):
+        tracks = self.song().tracks
+        scenes = self.song().scenes
+        if track_index < 0 or track_index >= len(tracks) or scene_index < 0 or scene_index >= len(scenes):
             return None
-        return track.clip_slots[scene_index]
+        return tracks[track_index].clip_slots[scene_index]
 
     def _selected_device(self):
         track = self.song().view.selected_track
@@ -655,6 +659,7 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
         self._add_listener(song.view, "selected_track", self._on_selected_track_changed)
 
     def _on_song_structure_changed(self):
+        self._clip_section_ranges = {}
         self._set_session_offset(self._track_offset // SESSION_TRACKS, self._scene_offset // SESSION_SCENES)
 
     def _on_selected_track_changed(self):

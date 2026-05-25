@@ -130,7 +130,13 @@ CC 119 value 0..3  = select automation clip section C1..C4
 The Remote Script clamps banks to available Live tracks/scenes. Clip section
 selection divides the last Galahad-launched clip, or the currently highlighted
 clip if no Galahad clip has been launched, into four equal beat ranges and moves
-that clip's start marker to the selected range.
+that clip's start marker to the selected range. The script stores the last
+Galahad-launched clip as absolute track/scene coordinates, so later bank changes
+do not change the target clip.
+
+The JUCE plugin emits CC `113` and CC `119` only after it has established an
+initial local baseline and the corresponding parameter changes. Loading a Live
+set should not immediately alter record mode or clip start markers.
 
 ### Scene And Stop Commands
 

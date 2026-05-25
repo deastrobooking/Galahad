@@ -15,7 +15,9 @@ Standard plugin APIs cannot natively control arbitrary Live tracks, clips, or UI
 - OSC command model
 - UDP transport with minimal OSC encoder/decoder
 - convenience API for clip launch, transport, and track volume
-- Python bridge stub for Ableton-side integration
+- Python bridge stub and MIDI Remote Script for Ableton-side integration
+- optional JUCE MIDI Tools plugin with controller mapping, direct MIDI-device
+  capture, automation-section selection, and in-plugin Ableton setup help
 
 ## Repository layout
 

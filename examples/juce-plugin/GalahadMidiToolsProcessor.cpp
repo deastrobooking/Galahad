@@ -202,14 +202,14 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     updateEngineConfig(bpm);
 
     const bool automationRecordState = automationRecordEnabled();
-    const bool shouldPublishAutomationRecord = !hasAutomationRecordState_
-        || automationRecordState != lastAutomationRecordState_;
+    const bool shouldPublishAutomationRecord = hasAutomationRecordState_
+        && automationRecordState != lastAutomationRecordState_;
     hasAutomationRecordState_ = true;
     lastAutomationRecordState_ = automationRecordState;
 
     const auto surfaceContext = currentSurfacePerformanceContext();
-    const bool shouldPublishAutomationSection = !hasAutomationSectionState_
-        || surfaceContext.pattern != lastAutomationSection_;
+    const bool shouldPublishAutomationSection = hasAutomationSectionState_
+        && surfaceContext.pattern != lastAutomationSection_;
     hasAutomationSectionState_ = true;
     lastAutomationSection_ = surfaceContext.pattern;
 

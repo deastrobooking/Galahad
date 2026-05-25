@@ -215,12 +215,14 @@ list after plugging in or removing controllers.
 
 Surface assignments are saved per controller, pattern, target channel, control,
 and map layer. The four patterns are also the four automation clip sections:
-when C1..C4 changes, Galahad emits CC 119 with value `0..3`, letting the Remote
-Script move the active automation clip start to that quarter of the clip. After a
-mapped control has produced a CC value, that last value is saved with the
-assignment and recalled when the active pattern/channel/layer changes. That keeps
-four knob or fader positions separate across patterns and channel-focused pages
-instead of sharing one master mapping state.
+after Galahad has established an initial baseline, C1..C4 changes emit CC 119
+with value `0..3`, letting the Remote Script move the active automation clip
+start to that quarter of the clip. The script remembers the last Galahad-launched
+clip using absolute track/scene coordinates, so bank changes do not retarget the
+section command. After a mapped control has produced a CC value, that last value
+is saved with the assignment and recalled when the active pattern/channel/layer
+changes. That keeps four knob or fader positions separate across patterns and
+channel-focused pages instead of sharing one master mapping state.
 
 Ableton does not need to expose every stored mapping as a separate automatable
 parameter. Instead, use the compact focused editor parameters:
@@ -297,10 +299,12 @@ The editor visualizes the last incoming CC, the last mapped output, and per-slot
 activity.
 
 `Auto Rec` is a saved and automatable plugin parameter. Clip envelopes can turn
-it on or off; when the value changes Galahad emits CC 113 with value `127` for
-on and `0` for off. The Ableton Remote Script treats that CC as an explicit
-record-mode set command, so it can drive Live's record state without relying on
-a toggle-only command.
+it on or off; after Galahad has established an initial baseline, value changes
+emit CC 113 with value `127` for on and `0` for off. The Ableton Remote Script
+treats that CC as an explicit record-mode set command, so it can drive Live's
+record state without relying on a toggle-only command. Galahad does not send the
+initial Auto Rec value on plugin load, avoiding surprise record-state changes
+while opening a Live set.
 
 If no manual slot assignments have been made, hardware capture still auto-fills
 controller slots from input devices whose names include:
