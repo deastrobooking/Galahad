@@ -298,8 +298,6 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
     : juce::AudioProcessorEditor(audioProcessor),
       processor_(audioProcessor)
 {
-    setSize(EditorWidth, EditorHeight);
-
     titleLabel_.setText("Galahad Mapper", juce::dontSendNotification);
     titleLabel_.setJustificationType(juce::Justification::centredLeft);
     titleLabel_.setColour(juce::Label::textColourId, Text);
@@ -358,6 +356,7 @@ GalahadMidiToolsEditor::GalahadMidiToolsEditor(GalahadMidiToolsProcessor& audioP
     lastHardwareInputCount_ = processor_.activeHardwareInputCount();
     lastHardwareCaptureState_ = hardwareCaptureButton_.getToggleState();
 
+    setSize(EditorWidth, EditorHeight);
     startTimerHz(30);
 }
 
@@ -396,13 +395,18 @@ void GalahadMidiToolsEditor::resized()
 
     hardwareLabel_.setBounds(area.removeFromTop(22));
     area.removeFromTop(8);
-    activityView_->setBounds(area.removeFromTop(86));
+    if (activityView_ != nullptr)
+        activityView_->setBounds(area.removeFromTop(86));
+    else
+        area.removeFromTop(86);
     area.removeFromTop(12);
     area.removeFromTop(22);
 
     for (auto& row : rows_)
     {
-        row->setBounds(area.removeFromTop(RowHeight));
+        auto rowBounds = area.removeFromTop(RowHeight);
+        if (row != nullptr)
+            row->setBounds(rowBounds);
         area.removeFromTop(8);
     }
 }
