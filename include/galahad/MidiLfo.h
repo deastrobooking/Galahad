@@ -26,7 +26,9 @@ struct MidiLfoConfig
     uint8_t minimum{ 0 };
     uint8_t maximum{ 127 };
     double rateHz{ 0.5 };
-    LfoShape shape{ LfoShape::Sine };
+    // Default matches the plugin parameter default (index 1 = Triangle).
+    // Keep this in sync with the LfoShapeId parameter default in createParameterLayout().
+    LfoShape shape{ LfoShape::Triangle };
 };
 
 class MidiLfo

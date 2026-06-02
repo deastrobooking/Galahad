@@ -12,11 +12,11 @@
 #include <array>
 #include <atomic>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <vector>
 
-class GalahadMidiToolsProcessor final : public juce::AudioProcessor
+class GalahadMidiToolsProcessor final : public juce::AudioProcessor,
+                                        private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     struct ControllerSnapshot
@@ -193,6 +193,9 @@ private:
         std::unique_ptr<juce::MidiInput> input;
     };
 
+    // juce::AudioProcessorValueTreeState::Listener
+    void parameterChanged(const juce::String& parameterID, float newValue) override;
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     static galahad::MidiEvent fromJuceMidi(const juce::MidiMessage& message, int sampleOffset) noexcept;
@@ -245,8 +248,15 @@ private:
     juce::StringArray activeHardwareInputNames_;
     std::array<juce::String, ControllerSlotCount> controllerSlotDeviceIdentifiers_{};
     std::array<juce::String, ControllerSlotCount> controllerSlotDeviceNames_{};
-    mutable std::mutex hardwareMidiInputsMutex_;
+    // SpinLock is appropriate here: the audio thread holds it only for the duration
+    // of MidiMessageCollector::removeNextBlockOfMessages calls (a few microseconds).
+    // The non-RT thread holds it only for the brief swap of the pre-built input list.
+    mutable juce::SpinLock hardwareMidiInputsMutex_;
     double sampleRate_{ 44100.0 };
+    double lastEngineBpm_{ 0.0 };
+    // Set by parameterChanged() (any thread) and consumed in processBlock (audio thread).
+    // Avoids rebuilding the full engine config every block when nothing has changed.
+    std::atomic<bool> engineConfigDirty_{ true };
     bool controllerSlotAssignmentsManual_{ false };
     std::atomic<int> activeHardwareInputCount_{ 0 };
     std::atomic<int> lastTrack_{ -1 };

@@ -17,6 +17,10 @@ public:
     const MidiRouteRule& rule(size_t index) const noexcept;
 
     size_t route(std::span<const MidiEvent> input, std::span<MidiEvent> output) const noexcept;
+
+    /// Merge two event streams into @p output in sample-offset order.
+    /// @pre Both @p a and @p b must already be sorted in ascending sampleOffset order.
+    ///      Passing unsorted spans produces silently incorrect output.
     size_t merge(std::span<const MidiEvent> a, std::span<const MidiEvent> b, std::span<MidiEvent> output) const noexcept;
 
 private:

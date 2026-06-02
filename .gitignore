@@ -1,6 +1,50 @@
+# CMake build directories
 build/
 build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+
+# Compiled objects and libraries
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# VST3 / AU bundles (built artifacts)
+*.vst3
+*.component
+*.aaxplugin
+
+# JUCE-generated files
+JuceLibraryCode/
+*.jucer
+
+# IDE / editor
+.vscode/
+.idea/
+*.xcodeproj/
+*.xcworkspace/
+*.suo
+*.user
+*.userosscache
+*.sln.docview
+
+# Vim / other editors
 *.swp
 *.swo
 *.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+bridge/python/**/__pycache__/

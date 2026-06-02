@@ -85,7 +85,6 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
         self._last_feedback = {}
         self._listeners = []
         self._last_launched_cell = None
-        self._clip_section_ranges = {}
 
         with self.component_guard():
             self.log_message("GalahadMidiToolsRemoteScript protocol v1 loaded")
@@ -110,6 +109,15 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
         channel = midi_bytes[0] & 0x0F
         if status == 0x90 and len(midi_bytes) >= 3 and midi_bytes[2] > 0:
             self._handle_note_on(channel, midi_bytes[1], midi_bytes[2])
+        elif (status == 0x80 or (status == 0x90 and len(midi_bytes) >= 3 and midi_bytes[2] == 0)):
+            # NoteOff (0x80) or NoteOn with velocity 0 — no session action needed,
+            # but refresh clip feedback so pad LEDs stay accurate.
+            if len(midi_bytes) >= 2:
+                note = midi_bytes[1]
+                cell_index = note - CLIP_BASE_NOTE
+                if 0 <= cell_index < SESSION_TRACKS * SESSION_SCENES:
+                    self._refresh_clip_feedback(cell_index % SESSION_TRACKS,
+                                                cell_index // SESSION_TRACKS)
         elif status == 0xB0 and len(midi_bytes) >= 3:
             self._handle_cc(channel, midi_bytes[1], midi_bytes[2])
 
@@ -253,10 +261,9 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
         return self._safe_get(slot, "clip", None)
 
     def _clip_section_bounds(self, clip):
-        key = id(clip)
-        if key in self._clip_section_ranges:
-            return self._clip_section_ranges[key]
-
+        # Do NOT cache bounds: clip loop/end-marker positions can change (via
+        # trimming, loop resizing, or automation) without a song-structure event.
+        # Re-reading them fresh on every section-select call is cheap enough.
         start = self._safe_get(clip, "start_marker", None)
         if start is None:
             start = self._safe_get(clip, "loop_start", 0.0)
@@ -270,9 +277,7 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
         if end <= start:
             return None
 
-        bounds = (start, end)
-        self._clip_section_ranges[key] = bounds
-        return bounds
+        return (start, end)
 
     def _set_clip_start(self, clip, section_start):
         try:
@@ -659,7 +664,6 @@ class GalahadMidiToolsRemoteScript(ControlSurface):
         self._add_listener(song.view, "selected_track", self._on_selected_track_changed)
 
     def _on_song_structure_changed(self):
-        self._clip_section_ranges = {}
         self._set_session_offset(self._track_offset // SESSION_TRACKS, self._scene_offset // SESSION_SCENES)
 
     def _on_selected_track_changed(self):

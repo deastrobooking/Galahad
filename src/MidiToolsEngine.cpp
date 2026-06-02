@@ -1,4 +1,5 @@
 #include "galahad/MidiToolsEngine.h"
+#include "galahad/detail/MidiMath.h"
 
 #include <algorithm>
 
@@ -99,6 +100,6 @@ void MidiToolsEngine::applyRouterConfig(const RouterModuleConfig& config) noexce
 
 uint8_t MidiToolsEngine::clampMidi(int value) noexcept
 {
-    return static_cast<uint8_t>(std::clamp(value, 0, 127));
+    return galahad::detail::clampMidi(value);
 }
 } // namespace galahad

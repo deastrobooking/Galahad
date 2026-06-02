@@ -144,10 +144,17 @@ GalahadMidiToolsProcessor::GalahadMidiToolsProcessor()
     initializeControllerSurfaceMaps();
     cacheControllerMapParameters();
     updateEngineConfig(120.0);
+
+    // Register for parameter changes so processBlock only rebuilds the engine
+    // config when something actually changed (rather than every block).
+    for (auto* parameter : parameters_.processor.getParameters())
+        parameters_.addParameterListener(parameter->getParameterID(), this);
 }
 
 GalahadMidiToolsProcessor::~GalahadMidiToolsProcessor()
 {
+    for (auto* parameter : parameters_.processor.getParameters())
+        parameters_.removeParameterListener(parameter->getParameterID(), this);
     closeHardwareMidiInputs();
 }
 
@@ -181,7 +188,9 @@ bool GalahadMidiToolsProcessor::isBusesLayoutSupported(const BusesLayout& layout
 void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     buffer.clear();
-    ensureVirtualMidiOutput();
+    // NOTE: ensureVirtualMidiOutput() is intentionally NOT called here.
+    // Creating OS-level MIDI devices allocates memory and must only happen in
+    // prepareToPlay(), never inside the real-time audio callback.
     syncSurfaceEditorToSelectedMap();
 
     std::array<galahad::MidiEvent, MaxBlockEvents> incoming{};
@@ -199,7 +208,16 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 bpm = *positionBpm;
         }
     }
-    updateEngineConfig(bpm);
+
+    // Only rebuild the engine config when a parameter changed or the host BPM moved.
+    // parameterChanged() sets engineConfigDirty_ from any thread; we consume it here.
+    const bool bpmChanged = (bpm != lastEngineBpm_);
+    const bool paramsChanged = engineConfigDirty_.exchange(false, std::memory_order_acq_rel);
+    if (paramsChanged || bpmChanged)
+    {
+        lastEngineBpm_ = bpm;
+        updateEngineConfig(bpm);
+    }
 
     const bool automationRecordState = automationRecordEnabled();
     const bool shouldPublishAutomationRecord = hasAutomationRecordState_
@@ -278,7 +296,7 @@ void GalahadMidiToolsProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
     if (shouldCaptureHardwareInputs())
     {
-        const std::lock_guard lock(hardwareMidiInputsMutex_);
+        const juce::SpinLock::ScopedLockType lock(hardwareMidiInputsMutex_);
         for (auto& hardware : hardwareMidiInputs_)
         {
             if (hardware.collector == nullptr)
@@ -536,6 +554,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout GalahadMidiToolsProcessor::c
     return { params.begin(), params.end() };
 }
 
+void GalahadMidiToolsProcessor::parameterChanged(const juce::String& /*parameterID*/, float /*newValue*/)
+{
+    // Called from any thread (UI or audio) whenever a parameter changes.
+    // Set the dirty flag so processBlock rebuilds the engine config next block.
+    engineConfigDirty_.store(true, std::memory_order_release);
+}
+
 void GalahadMidiToolsProcessor::updateEngineConfig(double bpm)
 {
     galahad::MidiToolsEngineConfig config;
@@ -585,59 +610,76 @@ void GalahadMidiToolsProcessor::ensureVirtualMidiOutput()
 void GalahadMidiToolsProcessor::refreshHardwareMidiInputs()
 {
     const auto devices = availableMidiInputs();
-    const std::lock_guard lock(hardwareMidiInputsMutex_);
 
-    for (auto& hardware : hardwareMidiInputs_)
+    // Step 1: read/update slot assignments under a brief lock, then copy identifiers
+    // out so we can open devices WITHOUT holding the lock (device I/O can be slow).
+    std::array<juce::String, ControllerSlotCount> identifiersCopy;
+    {
+        const juce::SpinLock::ScopedLockType lock(hardwareMidiInputsMutex_);
+        assignDefaultControllerSlotsIfNeeded(devices);
+        identifiersCopy = controllerSlotDeviceIdentifiers_;
+    }
+
+    // Step 2: build the new input list outside the lock.
+    std::vector<HardwareMidiInput> newInputs;
+    juce::StringArray newActiveNames;
+
+    if (shouldCaptureHardwareInputs())
+    {
+        juce::StringArray openedIdentifiers;
+        for (int slot = 0; slot < ControllerSlotCount; ++slot)
+        {
+            const auto& identifier = identifiersCopy[static_cast<size_t>(slot)];
+            if (identifier.isEmpty() || openedIdentifiers.contains(identifier))
+                continue;
+
+            const juce::MidiDeviceInfo* selectedDevice = nullptr;
+            for (const auto& device : devices)
+            {
+                if (device.identifier == identifier)
+                {
+                    selectedDevice = &device;
+                    break;
+                }
+            }
+
+            if (selectedDevice == nullptr)
+                continue;
+
+            HardwareMidiInput hardware;
+            hardware.slot = slot;
+            hardware.name = selectedDevice->name;
+            hardware.collector = std::make_unique<juce::MidiMessageCollector>();
+            hardware.collector->reset(sampleRate_);
+            hardware.input = juce::MidiInput::openDevice(selectedDevice->identifier, hardware.collector.get());
+            if (hardware.input == nullptr)
+                continue;
+
+            hardware.input->start();
+            newActiveNames.add("C" + juce::String(slot + 1) + ": " + selectedDevice->name);
+            newInputs.push_back(std::move(hardware));
+            openedIdentifiers.add(identifier);
+        }
+    }
+
+    // Step 3: swap atomically under a brief lock so the audio thread is blocked
+    // for at most a pointer-swap's worth of time.
+    std::vector<HardwareMidiInput> oldInputs;
+    {
+        const juce::SpinLock::ScopedLockType lock(hardwareMidiInputsMutex_);
+        std::swap(hardwareMidiInputs_, newInputs); // newInputs now holds old data
+        oldInputs = std::move(newInputs);
+        activeHardwareInputNames_ = newActiveNames;
+        activeHardwareInputCount_.store(static_cast<int>(hardwareMidiInputs_.size()),
+                                        std::memory_order_relaxed);
+    }
+
+    // Step 4: stop old inputs AFTER releasing the lock so we don't block the audio thread.
+    for (auto& hardware : oldInputs)
     {
         if (hardware.input != nullptr)
             hardware.input->stop();
     }
-    hardwareMidiInputs_.clear();
-    activeHardwareInputNames_.clear();
-    assignDefaultControllerSlotsIfNeeded(devices);
-
-    if (!shouldCaptureHardwareInputs())
-    {
-        activeHardwareInputCount_.store(0, std::memory_order_relaxed);
-        return;
-    }
-
-    juce::StringArray openedIdentifiers;
-    for (int slot = 0; slot < ControllerSlotCount; ++slot)
-    {
-        const auto identifier = controllerSlotDeviceIdentifiers_[static_cast<size_t>(slot)];
-        if (identifier.isEmpty() || openedIdentifiers.contains(identifier))
-            continue;
-
-        const juce::MidiDeviceInfo* selectedDevice = nullptr;
-        for (const auto& device : devices)
-        {
-            if (device.identifier == identifier)
-            {
-                selectedDevice = &device;
-                break;
-            }
-        }
-
-        if (selectedDevice == nullptr)
-            continue;
-
-        HardwareMidiInput hardware;
-        hardware.slot = slot;
-        hardware.name = selectedDevice->name;
-        hardware.collector = std::make_unique<juce::MidiMessageCollector>();
-        hardware.collector->reset(sampleRate_);
-        hardware.input = juce::MidiInput::openDevice(selectedDevice->identifier, hardware.collector.get());
-        if (hardware.input == nullptr)
-            continue;
-
-        hardware.input->start();
-        activeHardwareInputNames_.add("C" + juce::String(slot + 1) + ": " + selectedDevice->name);
-        hardwareMidiInputs_.push_back(std::move(hardware));
-        openedIdentifiers.add(identifier);
-    }
-
-    activeHardwareInputCount_.store(static_cast<int>(hardwareMidiInputs_.size()), std::memory_order_relaxed);
 }
 
 std::vector<juce::MidiDeviceInfo> GalahadMidiToolsProcessor::availableMidiInputs() const
@@ -651,13 +693,13 @@ std::vector<juce::MidiDeviceInfo> GalahadMidiToolsProcessor::availableMidiInputs
 
 juce::StringArray GalahadMidiToolsProcessor::activeHardwareInputNames() const
 {
-    const std::lock_guard lock(hardwareMidiInputsMutex_);
+    const juce::SpinLock::ScopedLockType lock(hardwareMidiInputsMutex_);
     return activeHardwareInputNames_;
 }
 
 juce::StringArray GalahadMidiToolsProcessor::controllerSlotDeviceNames() const
 {
-    const std::lock_guard lock(hardwareMidiInputsMutex_);
+    const juce::SpinLock::ScopedLockType lock(hardwareMidiInputsMutex_);
 
     juce::StringArray names;
     for (const auto& name : controllerSlotDeviceNames_)
@@ -669,7 +711,7 @@ juce::StringArray GalahadMidiToolsProcessor::controllerSlotDeviceNames() const
 juce::String GalahadMidiToolsProcessor::controllerSlotDeviceIdentifier(int slot) const
 {
     slot = juce::jlimit(0, ControllerSlotCount - 1, slot);
-    const std::lock_guard lock(hardwareMidiInputsMutex_);
+    const juce::SpinLock::ScopedLockType lock(hardwareMidiInputsMutex_);
     return controllerSlotDeviceIdentifiers_[static_cast<size_t>(slot)];
 }
 
@@ -689,7 +731,7 @@ void GalahadMidiToolsProcessor::setControllerSlotDeviceIdentifier(int slot, cons
     }
 
     {
-        const std::lock_guard lock(hardwareMidiInputsMutex_);
+        const juce::SpinLock::ScopedLockType lock(hardwareMidiInputsMutex_);
         auto& slotIdentifier = controllerSlotDeviceIdentifiers_[static_cast<size_t>(slot)];
         auto& slotName = controllerSlotDeviceNames_[static_cast<size_t>(slot)];
 
@@ -710,7 +752,7 @@ juce::ValueTree GalahadMidiToolsProcessor::createControllerDeviceSlotsState() co
 {
     juce::ValueTree state{ ControllerDeviceSlotsStateId };
 
-    const std::lock_guard lock(hardwareMidiInputsMutex_);
+    const juce::SpinLock::ScopedLockType lock(hardwareMidiInputsMutex_);
     state.setProperty("manual", controllerSlotAssignmentsManual_ ? 1 : 0, nullptr);
 
     if (!controllerSlotAssignmentsManual_)
@@ -735,7 +777,7 @@ juce::ValueTree GalahadMidiToolsProcessor::createControllerDeviceSlotsState() co
 
 void GalahadMidiToolsProcessor::restoreControllerDeviceSlotsState(const juce::ValueTree& state)
 {
-    const std::lock_guard lock(hardwareMidiInputsMutex_);
+    const juce::SpinLock::ScopedLockType lock(hardwareMidiInputsMutex_);
 
     for (auto& identifier : controllerSlotDeviceIdentifiers_)
         identifier.clear();
@@ -823,7 +865,7 @@ void GalahadMidiToolsProcessor::assignDefaultControllerSlotsIfNeeded(const std::
 
 void GalahadMidiToolsProcessor::closeHardwareMidiInputs()
 {
-    const std::lock_guard lock(hardwareMidiInputsMutex_);
+    const juce::SpinLock::ScopedLockType lock(hardwareMidiInputsMutex_);
 
     for (auto& hardware : hardwareMidiInputs_)
     {
@@ -848,16 +890,24 @@ bool GalahadMidiToolsProcessor::automationRecordEnabled() const noexcept
 
 bool GalahadMidiToolsProcessor::isPreferredHardwareInput(const juce::MidiDeviceInfo& device)
 {
+    // Auto-assign every available MIDI input *except* Galahad's own virtual output
+    // (to avoid feedback loops) and common DAW/OS virtual ports that are unlikely
+    // to be physical controllers.
+    // Users can always override auto-assignment with the manual slot selectors.
     const auto name = device.name.toLowerCase();
 
     if (name.contains("galahad"))
         return false;
 
-    return name.contains("midimix")
-        || name.contains("midi mix")
-        || name.contains("launch control")
-        || name.contains("akai")
-        || name.contains("novation");
+    // Exclude common DAW virtual / loopback ports that are not physical controllers.
+    if (name.contains("loopback") || name.contains("loopmidi"))
+        return false;
+    if (name.contains("iac driver") || name.contains("bus "))
+        return false;
+    if (name.contains("virtual") || name.contains("microsoft gs"))
+        return false;
+
+    return true;
 }
 
 void GalahadMidiToolsProcessor::cacheControllerMapParameters()
@@ -1596,6 +1646,9 @@ galahad::MidiEvent GalahadMidiToolsProcessor::fromJuceMidi(const juce::MidiMessa
                                    sampleOffset };
     }
 
+    // This path should never be reached: callers guard with isNoteOnOrOff()||isController().
+    // If it does fire it would produce a spurious CC 0 on channel 1; assert in debug builds.
+    jassertfalse;
     return galahad::MidiEvent{ galahad::MidiEventType::ControlChange, 1, 0, 0, sampleOffset };
 }
 

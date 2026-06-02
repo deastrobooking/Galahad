@@ -1,7 +1,12 @@
 #include "galahad/OscCodec.h"
 
-#include <arpa/inet.h>
 #include <cstring>
+
+#if defined(_WIN32)
+#include <winsock2.h>
+#else
+#include <arpa/inet.h>
+#endif
 
 namespace galahad::osc
 {
@@ -158,8 +163,30 @@ std::optional<Command> decodeMessage(const uint8_t* bytes, size_t length)
                 command.arguments.emplace_back(*value);
                 break;
             }
+            // 'd' (double), 'b' (blob), 'T'/'F' (bool), 'N' (nil), 'I' (impulse) etc.
+            // Skip 4-byte numeric tags; skip padded-string tags by re-using the string reader.
+            // Unknown width tags abort only that argument; the rest of the message is preserved.
+            case 'd':
+            {
+                // 64-bit double: advance 8 bytes
+                if (offset + 8 > length)
+                    return std::nullopt;
+                offset += 8;
+                break;
+            }
+            case 'T':
+            case 'F':
+            case 'N':
+            case 'I':
+                // Zero-width tags — no data payload
+                break;
             default:
-                return std::nullopt;
+                // Unknown fixed-width tag: skip 4 bytes and continue rather than
+                // aborting the whole message. If we run out of data, stop cleanly.
+                if (offset + 4 > length)
+                    return std::nullopt;
+                offset += 4;
+                break;
         }
     }
 

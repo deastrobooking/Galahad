@@ -1,6 +1,8 @@
 #include "galahad/MidiRouting.h"
+#include "galahad/detail/MidiMath.h"
 
 #include <algorithm>
+#include <cassert>
 
 namespace galahad
 {
@@ -73,6 +75,15 @@ size_t MidiMergerRouter::route(std::span<const MidiEvent> input, std::span<MidiE
 
 size_t MidiMergerRouter::merge(std::span<const MidiEvent> a, std::span<const MidiEvent> b, std::span<MidiEvent> output) const noexcept
 {
+    // Precondition: both spans must already be sorted in ascending sampleOffset order.
+    // Violating this produces incorrect merged output without any error or assertion.
+#ifdef JUCE_DEBUG
+    for (size_t i = 1; i < a.size(); ++i)
+        assert(a[i - 1].sampleOffset <= a[i].sampleOffset);
+    for (size_t i = 1; i < b.size(); ++i)
+        assert(b[i - 1].sampleOffset <= b[i].sampleOffset);
+#endif
+
     size_t ai = 0;
     size_t bi = 0;
     size_t count = 0;
@@ -121,7 +132,7 @@ bool MidiMergerRouter::ruleMatches(const MidiRouteRule& rule, const MidiEvent& e
 
 uint8_t MidiMergerRouter::clampMidi(int value) noexcept
 {
-    return static_cast<uint8_t>(std::clamp(value, 0, 127));
+    return galahad::detail::clampMidi(value);
 }
 
 int MidiMergerRouter::compareEvents(const MidiEvent& lhs, const MidiEvent& rhs) noexcept

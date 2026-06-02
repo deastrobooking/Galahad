@@ -1,4 +1,5 @@
 #include "galahad/AlgorithmicSequencer.h"
+#include "galahad/detail/MidiMath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -133,7 +134,9 @@ size_t AlgorithmicSequencer::process(double bpm, int sampleRate, int numSamples,
 
         const auto& current = steps_[stepIndex_];
         const uint32_t randomValue = nextRandom(randomState_);
-        if (current.enabled && (randomValue & 0x7f) <= current.probability)
+        // Use strict less-than so probability == 0 means "never fire" and
+        // probability == 127 means "always fire" (range [0..127] maps to [never..always]).
+        if (current.enabled && (randomValue & 0x7f) < current.probability)
         {
             const uint8_t channel = channelForStep(stepIndex_, randomValue);
             const uint8_t note = clampMidi(static_cast<int>(current.note) + current.transpose);
@@ -168,7 +171,7 @@ uint32_t AlgorithmicSequencer::nextRandom(uint32_t& state) noexcept
 
 uint8_t AlgorithmicSequencer::clampMidi(int value) noexcept
 {
-    return static_cast<uint8_t>(std::clamp(value, 0, 127));
+    return galahad::detail::clampMidi(value);
 }
 
 uint8_t AlgorithmicSequencer::channelForStep(size_t stepIndex, uint32_t randomValue) const noexcept
